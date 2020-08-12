@@ -232,9 +232,9 @@ class ItemRow extends UIComponent {
 
     this.iconRects = [];
 
-    this.engine.on("openInventory", () => {
-      this.iconRects = [];
-    });
+    var clearIconRects = () => this.iconRects = [];
+    this.engine.on("openInventory", clearIconRects);
+    this.engine.on("toggleInventory", clearIconRects);
   }
 
   onMouseClick(event) {
