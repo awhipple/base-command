@@ -88,7 +88,7 @@ export default class GameEngine {
 
   register(object, name) {
     if ( Array.isArray(object) ) {
-      object.forEach(obj => this.register(obj));
+      object.forEach(obj => this.register(obj, name));
       return;
     }
 
@@ -100,6 +100,10 @@ export default class GameEngine {
 
     if ( object.on === undefined ) {
       object.on = true;
+    }
+
+    if ( !object.engine ) {
+      object.engine = this;
     }
 
     if ( this.gameObjects.all.indexOf(object) === -1 ) {

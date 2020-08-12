@@ -1,4 +1,5 @@
 import Enemy from "./Enemy.js";
+import { explosion } from "./effects/Particle Effects.js";
 
 export default class Boss extends Enemy {
   constructor(engine, hp, type) {
@@ -97,6 +98,28 @@ export default class Boss extends Enemy {
 
     this.oX = Math.random()*30-15;
     this.oY = Math.random()*30-15;
+  }
+
+  startExplode() {
+    this.on = false;
+    var makeExplosion = (options = {}) => {
+      var rad = Math.random()*Math.PI*2;
+        var dist = options.center ? 0 : Math.random()*50;
+        this.engine.register(explosion(this.x + Math.cos(rad)*dist*1.5, this.y + Math.sin(rad)*dist, options));
+        this.engine.sounds.play("fireball", {volume: 1});
+        this.oX = Math.random()*30-15;
+        this.oY = Math.random()*30-15;
+    };
+    for ( var t = 815; t <= 3000; t += 160 ) {
+      setTimeout(makeExplosion, t);
+    }
+    for ( var t = 100; t <= 2000; t += 480 ) {
+      setTimeout(makeExplosion, t);
+    }
+    setTimeout(() => {
+      makeExplosion({center: true, count: 100, size: 2, smokeLife: 3});
+      this.engine.unregister(this);
+    }, 3500);
   }
 
   draw(ctx) {

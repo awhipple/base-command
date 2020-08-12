@@ -44,9 +44,15 @@ export default class Spawner {
       if ( boss && this.spawnBoss ) {
         this.engine.register(new Boss(this.engine, 2200, boss), "enemy");
         this.spawnBoss = false;
+        this.delayReward = 5;
       } else {
         this.engine.globals.base.on = false;
-        this._victory();
+        
+        this.delayReward = this.delayReward ?? 0;
+        this.delayReward -= 1/60;
+        if ( this.delayReward <= 0 ) {
+          this._victory();
+        }
       }
     }
 

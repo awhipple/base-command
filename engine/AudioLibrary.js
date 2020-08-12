@@ -89,6 +89,6 @@ class Sound {
 
   _addChannel() {
     var newNode = this.channels[0].cloneNode();
-    this.channels.splice(this.channelPointer - 1, 0, newNode);
+    this.channels.splice(this.channelPointer, 0, newNode);
   }
 }

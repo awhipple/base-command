@@ -30,9 +30,18 @@ export default class Enemy extends GameObject {
         this.engine.register(new Enemy(this.engine, this.x, this.y, Math.floor(this.cash/2), "white", -10), "enemy");
         this.engine.register(new Enemy(this.engine, this.x, this.y, Math.floor(this.cash/2), "white", 10), "enemy");
       }
+
       this._createCash();
-      this.engine.sounds.play("spark");
-      this.engine.unregister(this);
+      
+      if ( this.constructor.name === "Boss" ) {
+        this.engine.unregister(this);
+        this.engine.register(this);
+        this.startExplode();
+      } else {
+        this.engine.sounds.play("spark");
+        this.engine.unregister(this);
+      }
+
     } 
     if (type?.type === "lightning") {
       this.engine.register(Lightning.rect(this.engine, this.rect, {fade: 0.5, innerCol: type.innerCol, outerCol: type.outerCol}));
