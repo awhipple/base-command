@@ -182,6 +182,14 @@ export default class Game {
           this.invHide = false;
         }
       });
+
+      if ( this.engine.dev ) {
+        this.engine.globals.stats.power.val = 100;
+        this.engine.globals.stats.speed.val = 5;
+        this.engine.globals.levels.selected = 7;
+        this.engine.globals.levels.list[6].enemies = 0;
+        this.engine.trigger("startGame");
+      }
     });
   }
 

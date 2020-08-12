@@ -156,7 +156,9 @@ export default class GameEngine {
   startGameLoop() {
     this.nextTick = (new Date).getTime() - 100 * 1000;
 
-    setInterval(() => {
+    var engineLoop = () => {
+      requestAnimationFrame(engineLoop);
+
       this.loops = 0;
       while (new Date().getTime() > this.nextTick && this.loops < 10) {
         this.update();
@@ -164,7 +166,9 @@ export default class GameEngine {
         this.loops++;
       }
       this.nextTick = Math.max(this.nextTick, new Date().getTime());
-    }, 1000/60);
+    };
+
+    requestAnimationFrame(engineLoop);
   }
 
   update() {
