@@ -35,43 +35,9 @@ export default class ToolTip extends GameObject {
       fontSize: 13,
     })
 
-    engine.onMouseMove(event => {
-      this.x = constrain(event.pos.x, this.rect.w/2 + 10, engine.window.width - this.rect.h - 10);
-      
-      this.rect.y = event.pos.y + 40;
-      if ( this.rect.y + this.rect.h > engine.window.height - 10 ) {
-        this.rect.y = event.pos.y - 40 - this.rect.h;
-      }
-
-      this.iconRect.x = this.originX + 10;
-      this.iconRect.y = this.originY + 10;
-
-      this.itemName.x = this.originX + 65;
-      this.itemName.y = this.originY + 12;
-
-      this.statText.x = this.originX + 10;
-      this.statText.y = this.originY + 65;
-
-      var descriptionTop = this.originY + (this.statText.str === "" ? 50 : 95);
-      
-      this.descriptionText.x = this.originX + 10;
-      this.descriptionText.y = descriptionTop;
-      
-      this.mergeTop = descriptionTop + 25 + this.descriptionText.height;
-
-      this.mergeText.x = this.originX + 10;
-      this.mergeText.y = this.mergeTop;
-
-      this.noneText.x = this.originX + 10;
-      this.noneText.y = this.mergeTop + 25;
-
-      var newHeight = this.mergeTop - this.originY + 75;
-      
-      if ( Math.abs(this.rect.h - newHeight) > 1 ) {
-        this.rect.h = newHeight;
-        this.hide = true;
-      } else {
-        this.hide = false;
+    engine.onMouseMove(() => {
+      if ( this.item ) {
+        this._recomputeTooltip();
       }
     });
   }
@@ -79,11 +45,9 @@ export default class ToolTip extends GameObject {
   update() {
     if ( this.item !== this.engine.globals.toolTipItem ) {
       this.item = this.engine.globals.toolTipItem;
-      this.hide = true;
-    }
-    if ( this.descriptionText.str !== this.item?.description ) {
-      this.descriptionText.str = this.item?.description;
-      this.draw(this.engine.window.ctx);
+      if ( this.item ) {
+        this._recomputeTooltip();
+      }
     }
   }
 
@@ -99,7 +63,6 @@ export default class ToolTip extends GameObject {
       this.itemName.draw(ctx);
 
       if ( this.item.type === "weapon" ) {
-        this.statText.str = "Damage: " + Math.floor(this.item.projectile.damage*100) + "%   Rate: " + Math.floor(this.item.projectile.speed*100) + "%";
         this.statText.draw(ctx);
       } else {
         this.statText.str = "";
@@ -118,5 +81,49 @@ export default class ToolTip extends GameObject {
         this.noneText.draw(ctx);
       }
     }
+  }
+
+  _recomputeTooltip() {
+    var event = this.engine.mouse;
+    
+    this.x = constrain(event.pos.x, this.rect.w/2 + 10, engine.window.width - this.rect.w/2 - 10);
+
+    if ( this.item.type === "weapon" ) {
+      this.statText.str = "Damage: " + Math.floor(this.item.projectile.damage*100) + "%   Rate: " + Math.floor(this.item.projectile.speed*100) + "%";
+    }
+
+    this.descriptionText.str = this.item.description;
+    this.descriptionText._generateLines(engine.window.ctx, true);
+    
+    this.rect.h = (
+      (this.statText.str === "" ? 50 : 95) +
+      100 + this.descriptionText.height  
+    );
+
+    this.rect.y = event.pos.y + 40;
+    if ( this.rect.y + this.rect.h > engine.window.height - 10 ) {
+      this.rect.y = event.pos.y - 40 - this.rect.h;
+    };
+
+    var descriptionTop = this.originY + (this.statText.str === "" ? 50 : 95);
+    this.mergeTop = descriptionTop + 25 + this.descriptionText.height;
+
+    this.iconRect.x = this.originX + 10;
+    this.iconRect.y = this.originY + 10;
+
+    this.itemName.x = this.originX + 65;
+    this.itemName.y = this.originY + 12;
+
+    this.statText.x = this.originX + 10;
+    this.statText.y = this.originY + 65;
+    
+    this.descriptionText.x = this.originX + 10;
+    this.descriptionText.y = descriptionTop;
+
+    this.mergeText.x = this.originX + 10;
+    this.mergeText.y = this.mergeTop;
+
+    this.noneText.x = this.originX + 10;
+    this.noneText.y = this.mergeTop + 25;
   }
 }

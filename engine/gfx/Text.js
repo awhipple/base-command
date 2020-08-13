@@ -125,6 +125,9 @@ export default class Text {
   }
 
   _generateLines(ctx) {
+    ctx.save();
+    ctx.font = this.style;
+
     if ( !this.maxWidth ) {
       this.lines = [ this.str ];
       return;
@@ -138,11 +141,13 @@ export default class Text {
         break;
       }
       numWords++;
-      if( ctx.measureText(words.slice(0, numWords + 1).join(" ")).width > this.maxWidth) {
+      if ( ctx.measureText(words.slice(0, numWords + 1).join(" ")).width > this.maxWidth) {
         this.lines.push(words.slice(0, numWords).join(" "));
         words.splice(0, numWords);
         numWords = 0;
       }
     }
+
+    ctx.restore();
   }
 }
