@@ -169,6 +169,9 @@ export default class Game {
       this.engine.on("toggleInventory", () => {
         this.invSlide = -this.invSlide;
         this.invHide = this.invSlide > 0;
+        if ( this.invSlide < 0 ) {
+          this.engine.trigger("openInventory");
+        }
       })
 
       this.engine.on("displayReward", (item) => {

@@ -5,6 +5,7 @@ import { UIComponent } from "../../engine/gfx/ui/window/UIComponent.js";
 import Item from "../Item.js";
 import Sprite from "../../engine/gfx/Sprite.js";
 import EffectRect from "../effects/EffectRect.js";
+import Banner from "./Banner.js";
 
 export default class InventoryMenu extends UIWindow {
   constructor(engine, inventory, synths) {
@@ -17,10 +18,10 @@ export default class InventoryMenu extends UIWindow {
         height: 28,
       },
       {
-        type: "title",
+        type: Banner,
         text: "Items",
         fontSize: 40,
-        fontColor: "white",
+        fontColor: "#7dd3fc",
         center: true
       },
       {
@@ -35,10 +36,10 @@ export default class InventoryMenu extends UIWindow {
         height: 1,
       },
       {
-        type: "title",
+        type: Banner,
         text: "Synthesis",
         fontSize: 40,
-        fontColor: "white",
+        fontColor: "#c4b5fd",
         center: true
       },
       {
@@ -54,7 +55,7 @@ export default class InventoryMenu extends UIWindow {
       },
     ], {
       bgColor: "#000",
-      borderColor: "#fff",
+      borderColor: "#2a3a5a",
       outerPadding: 3,
       z: 101,
     });
@@ -151,7 +152,7 @@ class Items extends UIComponent {
     this.sortRect = new BoundingRect(480, 130, 50, 28);
     this.sortText = new Text('Sort', 487, 134, {
       fontSize: 15,
-      fontColor: "#55f",
+      fontColor: "#9aa7c2",
     });
     
     this.engine.on("stopDragItem", item => {

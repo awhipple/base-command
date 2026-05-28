@@ -6,6 +6,15 @@ import Lightning from "../engine/gfx/effects/Lightning.js";
 import DamageText from "./effects/DamageText.js";
 import Particle from "../engine/gfx/shapes/Particle.js";
 
+const ENEMY_PALETTE = {
+  white:  { glow: "#e8eef5", bright: "#ffffff", core: "#cdd9e6", edge: "#5e6878" },
+  red:    { glow: "#ff5050", bright: "#ffc0c0", core: "#e23434", edge: "#5a0d0d" },
+  green:  { glow: "#4dff88", bright: "#b6ffd0", core: "#34c46e", edge: "#0d4a2a" },
+  blue:   { glow: "#5aaaff", bright: "#b6dcff", core: "#3076c9", edge: "#10314f" },
+  purple: { glow: "#b266ff", bright: "#dec0ff", core: "#8a4ad6", edge: "#3a1359" },
+  yellow: { glow: "#ffd84d", bright: "#fff0a8", core: "#e6b800", edge: "#5a4400" },
+};
+
 export default class Enemy extends GameObject {
   constructor(engine, x, y, hp, type = "white", initialXv = 0) {
     super(engine, {
@@ -120,10 +129,58 @@ export default class Enemy extends GameObject {
     this.dead = true;
   }
 
-  draw(ctx) {
-    if ( !(this.type === "fireBall") ) {
-      this.rect.draw(ctx, this.type);
-      Text.draw(ctx, Math.ceil(this.hp), this.x, this.y - 25, {center: true, fontColor: this.type, fontSize: 40});
+  draw(ctx, opts = {}) {
+    if ( this.type === "fireBall" ) return;
+
+    var palette = ENEMY_PALETTE[this.type] || ENEMY_PALETTE.white;
+    var r = 35;
+    var t = performance.now() * 0.0008;
+
+    ctx.save();
+    var glow = ctx.createRadialGradient(this.x, this.y, r * 0.5, this.x, this.y, r * 1.45);
+    glow.addColorStop(0, palette.glow + "aa");
+    glow.addColorStop(1, palette.glow + "00");
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, r * 1.45, 0, Math.PI * 2);
+    ctx.fill();
+
+    var body = ctx.createRadialGradient(this.x - r * 0.35, this.y - r * 0.35, 2, this.x, this.y, r);
+    body.addColorStop(0, palette.bright);
+    body.addColorStop(0.55, palette.core);
+    body.addColorStop(1, palette.edge);
+    ctx.fillStyle = body;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, r, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.strokeStyle = palette.bright;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    ctx.strokeStyle = palette.edge;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    for ( var i = 0; i < 3; i++ ) {
+      var a = t + i * (Math.PI * 2 / 3);
+      ctx.moveTo(this.x + Math.cos(a) * r * 0.25, this.y + Math.sin(a) * r * 0.25);
+      ctx.lineTo(this.x + Math.cos(a) * r * 0.75, this.y + Math.sin(a) * r * 0.75);
+    }
+    ctx.stroke();
+    ctx.restore();
+
+    if ( !opts.noHp ) {
+      ctx.save();
+      ctx.font = "bold 36px Lucida Console, Menlo, monospace";
+      ctx.textAlign = "center";
+      ctx.lineJoin = "round";
+      ctx.lineWidth = 5;
+      ctx.strokeStyle = "rgba(0,0,0,0.85)";
+      ctx.fillStyle = "#ffffff";
+      var hpStr = String(Math.ceil(this.hp));
+      ctx.strokeText(hpStr, this.x, this.y - 22);
+      ctx.fillText(hpStr, this.x, this.y - 22);
+      ctx.restore();
     }
   }
 

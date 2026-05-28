@@ -102,9 +102,9 @@ export default class Levels {
       this.current.cash = this.current.cash ?? this.current.enemies * this.current.enemyHp * (this.current.enemyType === "red" ? 2 : 1);
       if ( !this.current.icon ) {
         var icon = document.createElement("canvas");
-        icon.width = 70;
-        icon.height = 70;
-        (new Enemy(this.engine, 35, 35, this.current.enemyHp, this.current.enemyType)).draw(icon.getContext("2d"));
+        icon.width = 100;
+        icon.height = 100;
+        (new Enemy(this.engine, 50, 50, this.current.enemyHp, this.current.enemyType)).draw(icon.getContext("2d"), {noHp: true});
         this.current.icon = new Image(icon);
       }
     }

@@ -4,6 +4,36 @@ import { UIComponent } from "../../engine/gfx/ui/window/UIComponent.js";
 import { BoundingRect } from "../../engine/GameMath.js";
 import Text from "../../engine/gfx/Text.js";
 import Item from "../Item.js";
+import Banner from "./Banner.js";
+import Button from "../../engine/gfx/ui/window/components/Button.js";
+
+class PrimaryButton extends Button {
+  drawComponent() {
+    if ( this.rect.w === 0 ) {
+      this.rect.w = this.text.getWidth(this.ctx) + this.padding * 2 + 30;
+      this.rect.x = this.center ? this.canvas.width / 2 - this.rect.w / 2 : 0;
+    }
+    var ctx = this.ctx;
+    ctx.save();
+    var bg = ctx.createLinearGradient(0, this.rect.y, 0, this.rect.y + this.rect.h);
+    if ( this.hover ) {
+      bg.addColorStop(0, "#1f6a36");
+      bg.addColorStop(1, "#0c3a1d");
+    } else {
+      bg.addColorStop(0, "#12421f");
+      bg.addColorStop(1, "#061c0d");
+    }
+    ctx.fillStyle = bg;
+    ctx.fillRect(this.rect.x, this.rect.y, this.rect.w, this.rect.h);
+    ctx.shadowColor = this.borderColor;
+    ctx.shadowBlur = this.hover ? 14 : 6;
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = this.borderColor;
+    ctx.strokeRect(this.rect.x, this.rect.y, this.rect.w, this.rect.h);
+    ctx.restore();
+    this.text.draw(ctx);
+  }
+}
 
 function upgradeStat(stat, globals) {
   return () => {
@@ -56,9 +86,9 @@ export default class TitleScreen extends UIWindow {
         height: 20,
       },
       {
-        type: "title",
+        type: Banner,
         text: "Base Command",
-        fontColor: "#0f0",
+        fontColor: "#7ee787",
         center: true,
       },
       {
@@ -69,7 +99,7 @@ export default class TitleScreen extends UIWindow {
         type: "title",
         text: () => "$" + engine.globals.cash,
         fontSize: 35,
-        fontColor: "#0f0",
+        fontColor: "#ffd84d",
         center: true,
       },
       {
@@ -96,11 +126,12 @@ export default class TitleScreen extends UIWindow {
         height: 1,
       },
       {
-        type: "button",
+        type: PrimaryButton,
         text: {
           button: "Start",
         },
-        fontColor: "#0f0",
+        fontColor: "#eaffea",
+        borderColor: "#7ee787",
         center: true,
         callback: () => {
           engine.trigger("startGame");
