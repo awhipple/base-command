@@ -24,8 +24,14 @@ export default class GameWindow {
     } else if ( !options.width && !options.height ) {
       this.ratioStyle = "width: 100%; height: 100%;";
     }
+    document.body.style.margin = "0";
+    document.body.style.overflow = "hidden";
+    if ( options.bgColor ) {
+      document.body.style.background = options.bgColor;
+    }
     if ( this.engine.mobile ) {
-      document.body.style = "overscroll-behavior: none; touch-action: manipulation";
+      document.body.style.overscrollBehavior = "none";
+      document.body.style.touchAction = "manipulation";
     }
     this.canvas.style = engine.mobile ? 
       "width: 100%; height: 100%;" :
