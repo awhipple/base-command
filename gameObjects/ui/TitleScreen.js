@@ -140,6 +140,37 @@ export default class TitleScreen extends UIWindow {
     ], {
       bgColor: "#000",
     })
+
+    this.gearRect = new BoundingRect(engine.window.width - 50, 10, 40, 40);
+  }
+
+  draw(ctx) {
+    super.draw(ctx);
+    var gx = this.gearRect.x + this.gearRect.w / 2;
+    var gy = this.gearRect.y + this.gearRect.h / 2;
+    ctx.save();
+    ctx.fillStyle = this.gearHover ? "#cfd6e2" : "#5a6b8a";
+    ctx.font = "26px Lucida Console, Menlo, monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("⚙", gx, gy + 1);
+    ctx.restore();
+  }
+
+  onMouseMove(event) {
+    this.gearHover = !this.hide && this.gearRect.contains(event.pos);
+    if ( this.gearHover ) {
+      this.engine.cursor = "pointer";
+    }
+    super.onMouseMove(event);
+  }
+
+  onMouseClick(event) {
+    if ( !this.hide && this.gearRect.contains(event.pos) ) {
+      this.engine.trigger("openSettings");
+      return false;
+    }
+    super.onMouseClick(event);
   }
 }
 

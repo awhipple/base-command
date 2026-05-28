@@ -17,6 +17,8 @@ import ToolTip from "./gameObjects/ui/ToolTip.js";
 import Lightning from "./engine/gfx/effects/Lightning.js";
 import Image from "./engine/gfx/Image.js";
 import { whiteCircle, blueCircle } from "./gameObjects/effects/ParticleSprites.js";
+import SettingsScreen from "./gameObjects/ui/SettingsScreen.js";
+import * as SaveStore from "./gameObjects/SaveStore.js";
 
 export default class Game {
   constructor(options = {}) {
@@ -101,7 +103,10 @@ export default class Game {
 
       this.inventory = this.engine.globals.inventory = new Inventory(engine);
       Item.NONE.engine = this.engine;
-      
+
+      this._restoreSave();
+      this._installAutosave();
+
       this.engine.register(this.engine.globals.base = new Base(engine), "base");
       
       this.engine.register(this.engine.globals.spawner = new Spawner(
@@ -124,6 +129,24 @@ export default class Game {
       }
 
       this.engine.register(this.engine.globals.toolTip = new ToolTip(this.engine));
+
+      this.settingsScreen = new SettingsScreen(this.engine, {
+        onReset: () => this._resetSave(),
+      });
+      this.engine.register(this.settingsScreen);
+
+      this.engine.on("openSettings", () => {
+        this._priorMenuHide = this.menu.hide;
+        this._priorInvHide = this.inventoryMenu.hide;
+        this.menu.hide = true;
+        this.inventoryMenu.hide = true;
+        this.settingsScreen.hide = false;
+      });
+      this.engine.on("closeSettings", () => {
+        this.settingsScreen.hide = true;
+        this.menu.hide = this._priorMenuHide ?? false;
+        this.inventoryMenu.hide = this._priorInvHide ?? true;
+      });
 
       this.invSlide = this.engine.prod ? 20 : -20;
 
@@ -265,6 +288,71 @@ export default class Game {
     ctx.fillRect(0, 0, can.width, can.height);
 
     return new Image(can);
+  }
+
+  _snapshot() {
+    return {
+      cash: this.engine.globals.cash,
+      stats: {
+        power: { lvl: stats.power.lvl, val: stats.power.val },
+        speed: { lvl: stats.speed.lvl, val: stats.speed.val },
+      },
+      items: this.inventory.items.map(i => i?.name ?? null),
+      equipment: {
+        primary: this.inventory.equipment.primary?.name ?? null,
+      },
+      tutorialStarted: !!this.tutorialStarted,
+    };
+  }
+
+  _restoreSave() {
+    var saved = SaveStore.load();
+    if ( !saved ) return;
+
+    if ( typeof saved.cash === "number" ) {
+      this.engine.globals.cash = saved.cash;
+    }
+    if ( saved.stats ) {
+      ["power", "speed"].forEach(k => {
+        if ( saved.stats[k] ) {
+          if ( typeof saved.stats[k].lvl === "number" ) stats[k].lvl = saved.stats[k].lvl;
+          if ( typeof saved.stats[k].val === "number" ) stats[k].val = saved.stats[k].val;
+        }
+      });
+    }
+    if ( Array.isArray(saved.items) ) {
+      this.inventory.items = saved.items.map(name => {
+        return (name && Item.list[name]) ? new Item(this.engine, name) : null;
+      });
+    }
+    if ( saved.equipment && saved.equipment.primary && Item.list[saved.equipment.primary] ) {
+      this.inventory.equipment.primary = new Item(this.engine, saved.equipment.primary);
+    }
+    if ( saved.tutorialStarted ) {
+      this.tutorialStarted = true;
+    }
+  }
+
+  _installAutosave() {
+    if ( this._autosaveInterval ) return;
+    this._autosaveInterval = setInterval(() => {
+      SaveStore.save(this._snapshot());
+    }, 3000);
+    this._beforeUnload = () => SaveStore.save(this._snapshot());
+    window.addEventListener("beforeunload", this._beforeUnload);
+  }
+
+  _resetSave() {
+    SaveStore.clear();
+    if ( this._autosaveInterval ) {
+      clearInterval(this._autosaveInterval);
+      this._autosaveInterval = null;
+    }
+    if ( this._beforeUnload ) {
+      window.removeEventListener("beforeunload", this._beforeUnload);
+      this._beforeUnload = null;
+    }
+    window.location.reload();
   }
 
   _startMergeTutorial() {
