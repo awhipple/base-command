@@ -46,7 +46,7 @@ class Sound {
   constructor(path) {
     var sound = new Audio();
     sound.src = path;
-    sound.setAttribute("preload", "auto");
+    sound.setAttribute("preload", "metadata");
     
     this.channels = [ sound ];
     this.channelPointer = 0;
