@@ -28,6 +28,7 @@ export default class Inventory {
     this.items = this.items.filter(item => item);
     this.items.sort((a, b) => a.type === b.type ? (a.name < b.name ? 1 : -1) : (a.type < b.type ? 1 : -1));
     this.engine.trigger("openInventory"); // Clear the inv menu and refreshes it
+    this.engine.trigger("saveRequested");
   }
 
   add(item) {
@@ -41,6 +42,7 @@ export default class Inventory {
       this.items.push(item);
     }
     this.engine.trigger("itemAcquired");
+    this.engine.trigger("saveRequested");
     return item;
   }
 
@@ -60,6 +62,7 @@ export default class Inventory {
     this.unequip(slot);
     this.equipment[slot] = item;
     this.engine.trigger("itemEquipped");
+    this.engine.trigger("saveRequested");
   }
 
   unequip(slot) {
@@ -68,6 +71,7 @@ export default class Inventory {
     }
     this.equipment[slot] = null;
     this.engine.trigger("openInventory"); // Clear the inv menu and refreshes it
+    this.engine.trigger("saveRequested");
   }
 
   attemptMerge(first, second) {
@@ -77,7 +81,9 @@ export default class Inventory {
         this.remove(first);
         this.remove(second);
         this.engine.trigger("itemsMerged");
-        return this.items[mergeIndex] = new Item(this.engine, first.stats.craft[second.name]);
+        var result = this.items[mergeIndex] = new Item(this.engine, first.stats.craft[second.name]);
+        this.engine.trigger("saveRequested");
+        return result;
       }
     }
     return null;

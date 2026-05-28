@@ -159,6 +159,7 @@ export default class Game {
         this.engine.unregister("projectile");
         this.engine.globals.base.on = false;
         this.engine.globals.spawner.reset();
+        this.engine.trigger("saveRequested");
       });
 
       this.engine.on("startGame", () => {
@@ -178,6 +179,7 @@ export default class Game {
           this._startMergeTutorial();
           this.tutorialStarted = true;
         }
+        this.engine.trigger("saveRequested");
       });
 
       this.engine.on("closeInventory", () => {
@@ -334,20 +336,15 @@ export default class Game {
   }
 
   _installAutosave() {
-    if ( this._autosaveInterval ) return;
-    this._autosaveInterval = setInterval(() => {
-      SaveStore.save(this._snapshot());
-    }, 3000);
+    if ( this._autosaveInstalled ) return;
+    this._autosaveInstalled = true;
+    this.engine.on("saveRequested", () => SaveStore.save(this._snapshot()));
     this._beforeUnload = () => SaveStore.save(this._snapshot());
     window.addEventListener("beforeunload", this._beforeUnload);
   }
 
   _resetSave() {
     SaveStore.clear();
-    if ( this._autosaveInterval ) {
-      clearInterval(this._autosaveInterval);
-      this._autosaveInterval = null;
-    }
     if ( this._beforeUnload ) {
       window.removeEventListener("beforeunload", this._beforeUnload);
       this._beforeUnload = null;

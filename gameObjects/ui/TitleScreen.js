@@ -35,17 +35,7 @@ class PrimaryButton extends Button {
   }
 }
 
-function upgradeStat(stat, globals) {
-  return () => {
-    if ( globals.cash >= stat.cost(stat.lvl) ) {
-      stat.val = stat.next(stat.lvl);
-      globals.cash -= stat.cost(stat.lvl);
-      stat.lvl++;
-    }
-  }
-}
-
-function makeUpgradeUI(name, stat, globals) {
+function makeUpgradeUI(engine, name, stat) {
   return {
     type: Upgrade,
     text: {
@@ -55,7 +45,14 @@ function makeUpgradeUI(name, stat, globals) {
       cost: () => "Cost: " + stat.cost(stat.lvl),
       stat: () => stat.val + " -> " + stat.next(stat.lvl),
     },
-    callback: upgradeStat(stat, globals),
+    callback: () => {
+      if ( engine.globals.cash >= stat.cost(stat.lvl) ) {
+        stat.val = stat.next(stat.lvl);
+        engine.globals.cash -= stat.cost(stat.lvl);
+        stat.lvl++;
+        engine.trigger("saveRequested");
+      }
+    },
     left: 130,
     fontColor: "#0f0",
   };
@@ -106,8 +103,8 @@ export default class TitleScreen extends UIWindow {
         type: "spacer",
         height: 20,
       },
-      makeUpgradeUI("Power", stats.power, engine.globals),
-      makeUpgradeUI("Speed", stats.speed, engine.globals),
+      makeUpgradeUI(engine, "Power", stats.power),
+      makeUpgradeUI(engine, "Speed", stats.speed),
       {
         type: "spacer",
         height: 60,

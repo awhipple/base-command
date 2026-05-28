@@ -160,6 +160,7 @@ class Items extends UIComponent {
         this.engine.globals.cash += item.value;
         this.options.inventory.remove(item);
         this.sellValueText.setText('');
+        this.engine.trigger("saveRequested");
       }
     });
   }
