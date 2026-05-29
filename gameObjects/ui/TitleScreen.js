@@ -2,10 +2,10 @@ import UIWindow from "../../engine/gfx/ui/window/index.js";
 import Upgrade from "./Upgrade.js";
 import { UIComponent } from "../../engine/gfx/ui/window/UIComponent.js";
 import { BoundingRect } from "../../engine/GameMath.js";
-import Text from "../../engine/gfx/Text.js";
 import Item from "../Item.js";
 import Banner from "./Banner.js";
 import Button from "../../engine/gfx/ui/window/components/Button.js";
+import { roundedRectPath } from "./canvas.js";
 
 class PrimaryButton extends Button {
   drawComponent() {
@@ -23,13 +23,14 @@ class PrimaryButton extends Button {
       bg.addColorStop(0, "#12421f");
       bg.addColorStop(1, "#061c0d");
     }
+    roundedRectPath(ctx, this.rect.x, this.rect.y, this.rect.w, this.rect.h, 14);
     ctx.fillStyle = bg;
-    ctx.fillRect(this.rect.x, this.rect.y, this.rect.w, this.rect.h);
+    ctx.fill();
     ctx.shadowColor = this.borderColor;
     ctx.shadowBlur = this.hover ? 14 : 6;
     ctx.lineWidth = 2;
     ctx.strokeStyle = this.borderColor;
-    ctx.strokeRect(this.rect.x, this.rect.y, this.rect.w, this.rect.h);
+    ctx.stroke();
     ctx.restore();
     this.text.draw(ctx);
   }
@@ -185,11 +186,13 @@ class LevelSelect extends UIComponent {
     this.levelText.fontColor = "white";
     this.levelText.fontSize = 20;
 
-    var boxSize = 20;
-    this.leftArrowRect = new BoundingRect(this.suggestedWidth/2-boxSize/2-60, 0, boxSize, boxSize);
-    this.leftArrow = new Text("<", this.leftArrowRect.x, -9, {fontColor: "white", fontSize: 30});
-    this.rightArrowRect = new BoundingRect(this.suggestedWidth/2-boxSize/2+60, 0, boxSize, boxSize);
-    this.rightArrow = new Text(">", this.rightArrowRect.x, -9, {fontColor: "white", fontSize: 30});
+    var arrowW = 56, arrowH = 56, arrowY = 20, spread = 135;
+    this.leftArrowRect = new BoundingRect(
+      this.suggestedWidth/2 - spread - arrowW/2, arrowY, arrowW, arrowH,
+    );
+    this.rightArrowRect = new BoundingRect(
+      this.suggestedWidth/2 + spread - arrowW/2, arrowY, arrowW, arrowH,
+    );
 
     this.enemiesText = this.options.textObj.enemies;
     this.enemiesText.x = 220;
@@ -232,12 +235,58 @@ class LevelSelect extends UIComponent {
     this.hover = false;
   }
 
+  _drawChevron(rect, dir, hover) {
+    var ctx = this.ctx;
+    var x = rect.x, y = rect.y, w = rect.w, h = rect.h;
+
+    ctx.save();
+    roundedRectPath(ctx, x, y, w, h, 14);
+
+    var grad = ctx.createLinearGradient(0, y, 0, y + h);
+    if ( hover ) {
+      grad.addColorStop(0, "#1c2a44");
+      grad.addColorStop(1, "#0a1226");
+    } else {
+      grad.addColorStop(0, "#121a2c");
+      grad.addColorStop(1, "#070b17");
+    }
+    ctx.fillStyle = grad;
+    ctx.fill();
+
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = hover ? "#7ee787" : "#3a4a6a";
+    if ( hover ) {
+      ctx.shadowColor = "#7ee787";
+      ctx.shadowBlur = 12;
+    }
+    ctx.stroke();
+
+    ctx.shadowBlur = 0;
+    var cx = x + w/2, cy = y + h/2, size = 12;
+    ctx.lineWidth = 4;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.strokeStyle = hover ? "#eaffea" : "#cfd6e2";
+    ctx.beginPath();
+    if ( dir === "left" ) {
+      ctx.moveTo(cx + size/2, cy - size);
+      ctx.lineTo(cx - size/2, cy);
+      ctx.lineTo(cx + size/2, cy + size);
+    } else {
+      ctx.moveTo(cx - size/2, cy - size);
+      ctx.lineTo(cx + size/2, cy);
+      ctx.lineTo(cx - size/2, cy + size);
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+
   drawComponent() {
     this.engine.globals.levels.current.icon.draw(this.ctx, this.iconRect);
 
     this.levelText.draw(this.ctx);
-    this.leftArrow.draw(this.ctx);
-    this.rightArrow.draw(this.ctx);
+    this._drawChevron(this.leftArrowRect, "left", this.leftHover);
+    this._drawChevron(this.rightArrowRect, "right", this.rightHover);
 
     this.enemiesText.draw(this.ctx);
     this.rewardText.draw(this.ctx);
