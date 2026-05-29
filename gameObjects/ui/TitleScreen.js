@@ -186,7 +186,11 @@ class LevelSelect extends UIComponent {
     this.levelText.fontColor = "white";
     this.levelText.fontSize = 20;
 
-    var arrowW = 56, arrowH = 56, arrowY = 20, spread = 135;
+    // spread is half the gap between the two arrows (they sit at center ±spread).
+    // 155 keeps the left arrow's right edge (~148) clear of the level icon at
+    // x=160; the right arrow stays symmetric with room to spare (canvas 600 →
+    // suggestedWidth 550, center 275).
+    var arrowW = 56, arrowH = 56, arrowY = 20, spread = 155;
     this.leftArrowRect = new BoundingRect(
       this.suggestedWidth/2 - spread - arrowW/2, arrowY, arrowW, arrowH,
     );
