@@ -53,7 +53,9 @@ export default class Base extends GameObject {
         // holds the side the shot just used -> alt ? -side : +side).
         this.flash = 1;
         this.flashSide = weapon.alt ? -1 : 1;
-        if ( hit && isLaser ) this.engine.sounds.play("zap", {volume: 0.25});
+        // The laser always zaps when fired (not only on a hit); other weapons
+        // already played their "shot" above.
+        if ( isLaser ) this.engine.sounds.play("zap", {volume: 0.25});
       }, 150);
     }
   }

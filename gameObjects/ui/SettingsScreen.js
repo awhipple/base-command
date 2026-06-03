@@ -1,6 +1,16 @@
 import UIWindow from "../../engine/gfx/ui/window/index.js";
 import Button from "../../engine/gfx/ui/window/components/Button.js";
 import Banner from "./Banner.js";
+import { BoundingRect } from "../../engine/GameMath.js";
+
+// A button whose label is re-read each draw from options.labelFn — lets the
+// "Unlock all" cheat flip its own text to "Unlocked" after it's used.
+class LabelButton extends Button {
+  drawComponent() {
+    if ( this.options.labelFn ) this.text.setText(this.options.labelFn());
+    super.drawComponent();
+  }
+}
 
 class DangerButton extends Button {
   drawComponent() {
@@ -34,85 +44,145 @@ class DangerButton extends Button {
 export default class SettingsScreen extends UIWindow {
   constructor(engine, opts = {}) {
     var w = Math.min(480, engine.window.width - 40);
-    var h = opts.dev ? 500 : 360;
     var armed = { state: false };
+    var unlocked = { state: false };   // flips the Unlock-all label to "Unlocked"
 
-    var components = [
-      { type: "spacer", height: 10 },
-      {
-        type: Banner,
-        text: "Settings",
-        fontSize: 36,
-        fontColor: "#9aa7c2",
-        center: true,
-      },
-      { type: "spacer", height: 30 },
-      {
-        type: DangerButton,
-        text: { button: "Reset save data" },
-        fontColor: "#ffd6d6",
-        fontSize: 20,
-        center: true,
-        armedFn: () => armed.state,
-        callback: () => {
-          if ( armed.state ) {
-            opts.onReset?.();
-          } else {
-            armed.state = true;
-            setTimeout(() => { armed.state = false; }, 4000);
-          }
+    // The "Credits" replay button only exists once the victory crawl has been
+    // unlocked (level 7 beaten — opts.showCredits returns the persisted flag).
+    // That flag can flip mid-session, so the component list + window height are
+    // built by these factories and re-run by rebuild() each time Settings opens.
+    var buildUI = (showCredits) => {
+      var components = [
+        { type: "spacer", height: 10 },
+        {
+          type: Banner,
+          text: "Settings",
+          fontSize: 36,
+          fontColor: "#9aa7c2",
+          center: true,
         },
-      },
-    ];
+        { type: "spacer", height: 30 },
+        {
+          type: DangerButton,
+          text: { button: "Reset save data" },
+          fontColor: "#ffd6d6",
+          fontSize: 20,
+          center: true,
+          armedFn: () => armed.state,
+          callback: () => {
+            if ( armed.state ) {
+              opts.onReset?.();
+            } else {
+              armed.state = true;
+              setTimeout(() => { armed.state = false; }, 4000);
+            }
+          },
+        },
+      ];
 
-    // Dev-only cheat buttons (repeatable): a row of energy cells, or one of every
-    // gem colour+tier.
-    if ( opts.dev ) {
-      components.push({ type: "spacer", height: 16 });
+      // Replay the victory crawl (unlocked by beating the last level).
+      if ( showCredits ) {
+        components.push({ type: "spacer", height: 16 });
+        components.push({
+          type: "button",
+          text: { button: "Credits" },
+          fontColor: "#ffe98a",
+          borderColor: "#ffd21e",
+          fontSize: 20,
+          center: true,
+          callback: () => opts.onCredits?.(),
+        });
+      }
+
+      // Dev-only cheat buttons (repeatable): a row of energy cells, or one of
+      // every gem colour+tier.
+      if ( opts.dev ) {
+        components.push({ type: "spacer", height: 16 });
+        components.push({
+          type: "button",
+          text: { button: "Cheat: Energy" },
+          fontColor: "#eaffea",
+          borderColor: "#7ee787",
+          fontSize: 20,
+          center: true,
+          callback: () => opts.onCheatEnergy?.(),
+        });
+        components.push({ type: "spacer", height: 10 });
+        components.push({
+          type: "button",
+          text: { button: "Cheat: Gems" },
+          fontColor: "#eafaff",
+          borderColor: "#7dd3fc",
+          fontSize: 20,
+          center: true,
+          callback: () => opts.onCheatGems?.(),
+        });
+        // Open every locked slot, drop all keys, and stop keys ever dropping.
+        // Stays on the Settings screen (so you can then hit another cheat) and
+        // flips its own label to "Unlocked" once used.
+        components.push({ type: "spacer", height: 10 });
+        components.push({
+          type: LabelButton,
+          text: { button: "Unlock all" },
+          labelFn: () => unlocked.state ? "Unlocked" : "Unlock all",
+          fontColor: "#fff0c2",
+          borderColor: "#f0c060",
+          fontSize: 20,
+          center: true,
+          callback: () => { unlocked.state = true; opts.onUnlockAll?.(); },
+        });
+      }
+
+      components.push({ type: "spacer", height: 20 });
       components.push({
         type: "button",
-        text: { button: "Cheat: Energy" },
-        fontColor: "#eaffea",
-        borderColor: "#7ee787",
+        text: { button: "Close" },
+        fontColor: "#cfd6e2",
+        borderColor: "#3a4a6a",
         fontSize: 20,
         center: true,
-        callback: () => opts.onCheatEnergy?.(),
+        callback: () => engine.trigger("closeSettings"),
       });
-      components.push({ type: "spacer", height: 10 });
-      components.push({
-        type: "button",
-        text: { button: "Cheat: Gems" },
-        fontColor: "#eafaff",
-        borderColor: "#7dd3fc",
-        fontSize: 20,
-        center: true,
-        callback: () => opts.onCheatGems?.(),
-      });
-    }
 
-    components.push({ type: "spacer", height: 20 });
-    components.push({
-      type: "button",
-      text: { button: "Close" },
-      fontColor: "#cfd6e2",
-      borderColor: "#3a4a6a",
-      fontSize: 20,
-      center: true,
-      callback: () => engine.trigger("closeSettings"),
-    });
+      return components;
+    };
+
+    var heightFor = (showCredits) =>
+      (opts.dev ? 564 : 360) + (showCredits ? 64 : 0);
+
+    var showCredits0 = !!opts.showCredits?.();
 
     super(engine, {
       x: engine.window.width / 2 - w / 2,
-      y: engine.window.height / 2 - h / 2,
-      w: w, h: h,
-    }, components, {
+      y: engine.window.height / 2 - heightFor(showCredits0) / 2,
+      w: w, h: heightFor(showCredits0),
+    }, buildUI(showCredits0), {
       bgColor: "#0a0f1a",
       borderColor: "#2a3a5a",
       outerPadding: 6,
       z: 200,
     });
 
+    this._buildUI = buildUI;
+    this._heightFor = heightFor;
+    this._showCredits = opts.showCredits;
+    this._w = w;
     this.hide = true;
+  }
+
+  // Re-lay-out the window for the current unlock state (the Credits button may
+  // have just appeared). Cheap + called only when Settings is opened.
+  rebuild() {
+    var show = !!this._showCredits?.();
+    var h = this._heightFor(show);
+    this.rect = new BoundingRect(
+      this.engine.window.width / 2 - this._w / 2,
+      this.engine.window.height / 2 - h / 2,
+      this._w, h
+    );
+    this.updateScreenRect();
+    this.ui = this._buildUI(show);
+    this._generateComponents();   // recomputes innerRect, canvas, hit map
   }
 
   draw(ctx) {

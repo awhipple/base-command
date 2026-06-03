@@ -2,6 +2,12 @@ import Enemy from "./Enemy.js";
 import { explosion } from "./effects/Particle Effects.js";
 
 export default class Boss extends Enemy {
+  // Health-bar fill colours per dragon type.
+  static BAR_COLORS = {
+    purple: { bright: "#c98bff", dark: "#5a1f9e" },
+    green:  { bright: "#5dffa0", dark: "#157a45" },
+  };
+
   constructor(engine, hp, type) {
     super(engine, engine.window.width/2, -100, hp, "purple");
     this.rect.x = this.rect.x - 30;
@@ -21,9 +27,8 @@ export default class Boss extends Enemy {
     this.sizeBoost = 30;
 
     this.bType = type;
-    if ( this.bType === "purple" ) {
-      this.hp = this.maxHp = hp * 5;
-    }
+    // HP is whatever the level passes as `bossHp` (no hidden multiplier) — tune
+    // it per-boss in Levels.js.
   }
 
   update() {
@@ -65,7 +70,9 @@ export default class Boss extends Enemy {
         if ( this.fireBalls > 1 ) {
           fireBallXv = this.fireBalls === 3 ? -10 : 10;
         }
-        var fbHp = this.bType === "purple" ? 500 : 22;
+        // Killable in the volleys-of-3 they come in (was 500 — the old inflated
+        // level-7 scale); a real threat but you can shoot them down with maxed gear.
+        var fbHp = this.bType === "purple" ? 100 : 22;
         this.engine.register(new Enemy(this.engine, this.x, this.y, fbHp, "fireBall", fireBallXv), "enemy");
         this.engine.sounds.play("fireball");
         this.fireBalls--;
@@ -126,12 +133,53 @@ export default class Boss extends Enemy {
     var img = this.flashBoss > 0 ? this.flash : this.img;
     
     img.draw(
-      ctx, 
+      ctx,
       this.rect.x - this.sizeBoost + this.oX, this.rect.y - this.sizeBoost + this.oY,
       this.rect.w + this.sizeBoost*2, this.rect.h + this.sizeBoost*2);
 
-    this.oX *= 0.5; 
+    this.oX *= 0.5;
     this.oY *= 0.5;
+
+    this._drawHealthBar(ctx);
+  }
+
+  // Boss health meter across the top of the screen (centred so it clears the
+  // top-right LVL/ENEMIES readout). Shown for the whole fight; hidden once it's
+  // dying (death explosion). Themed to the dragon's colour.
+  _drawHealthBar(ctx) {
+    if ( this.hp <= 0 ) return;
+    var W = this.engine.window.width;
+    var w = Math.min(W * 0.62, 520), h = 18, x = (W - w) / 2, y = 16;
+    var frac = Math.max(0, Math.min(1, this.hp / this.maxHp));
+    var theme = Boss.BAR_COLORS[this.bType] || Boss.BAR_COLORS.purple;
+
+    ctx.save();
+    // backing + empty track
+    ctx.fillStyle = "rgba(8,10,18,0.85)";
+    ctx.fillRect(x - 2, y - 2, w + 4, h + 4);
+    ctx.fillStyle = "rgba(40,48,66,0.9)";
+    ctx.fillRect(x, y, w, h);
+    // fill
+    var grad = ctx.createLinearGradient(x, y, x, y + h);
+    grad.addColorStop(0, theme.bright);
+    grad.addColorStop(1, theme.dark);
+    ctx.fillStyle = grad;
+    ctx.fillRect(x, y, w * frac, h);
+    // border
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = theme.bright;
+    ctx.strokeRect(x, y, w, h);
+    // label
+    ctx.font = "bold 13px Lucida Console, Menlo, monospace";
+    ctx.textAlign = "center";
+    ctx.lineJoin = "round";
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = "rgba(0,0,0,0.85)";
+    ctx.fillStyle = "#ffffff";
+    var name = this.bType.charAt(0).toUpperCase() + this.bType.slice(1) + " Dragon";
+    ctx.strokeText(name, W / 2, y + h - 4);
+    ctx.fillText(name, W / 2, y + h - 4);
+    ctx.restore();
   }
 
   _setDest(x, y) {

@@ -182,6 +182,8 @@ class LevelSelect extends UIComponent {
 
     this.levels = this.options.levels;
     this.rewardRect = new BoundingRect(290 + infoShift, 65, 25, 25);
+    // The one-time unlock KEY (when still unearned) sits just right of the cell.
+    this.keyRewardRect = new BoundingRect(290 + infoShift + 31, 65, 25, 25);
   }
 
   onMouseMove(event) {
@@ -189,15 +191,20 @@ class LevelSelect extends UIComponent {
     this.rightHover = this.rightArrowRect.contains(event.pos);
     this.hover = this.leftHover || this.rightHover;
 
-    // Hover the reward hourglass icon → show its tooltip (fuel/s + duration come
-    // from the hourglass's own description). Cache the Item per reward name.
+    // Hover the energy-cell reward → its tooltip; hover the one-time key (when
+    // still unearned) → the key's tooltip. Cache the cell Item per reward name;
+    // the key Item comes cached from levels.selectedKeyReward.
     var rewardName = this.levels.current.reward;
+    var keyItem = this.levels.selectedKeyReward;
     if ( rewardName && this.rewardRect.contains(event.pos) ) {
       if ( !this._rewardItem || this._rewardItem.name !== rewardName ) {
         this._rewardItem = new Item(this.engine, rewardName);
       }
       this.engine.globals.toolTipItem = this._rewardItem;
-    } else if ( this.engine.globals.toolTipItem === this._rewardItem ) {
+    } else if ( keyItem && this.keyRewardRect.contains(event.pos) ) {
+      this.engine.globals.toolTipItem = this._hoverKeyItem = keyItem;
+    } else if ( this.engine.globals.toolTipItem === this._rewardItem ||
+                this.engine.globals.toolTipItem === this._hoverKeyItem ) {
       this.engine.globals.toolTipItem = null;   // only clear our own tooltip
     }
   }
@@ -219,7 +226,8 @@ class LevelSelect extends UIComponent {
 
   hide() {
     this.hover = false;
-    if ( this.engine.globals.toolTipItem === this._rewardItem ) {
+    if ( this.engine.globals.toolTipItem === this._rewardItem ||
+         this.engine.globals.toolTipItem === this._hoverKeyItem ) {
       this.engine.globals.toolTipItem = null;
     }
   }
@@ -283,6 +291,13 @@ class LevelSelect extends UIComponent {
     if ( this.levels.selectedReward ) {
       this.levels.selectedReward.draw(this.ctx, this.rewardRect);
       this.rewardRect.draw(this.ctx, Item.list[this.levels.current.reward].borderColor);
+    }
+
+    // One-time unlock key (blue = synth, green = equip), drawn until it's earned.
+    var keyItem = this.levels.selectedKeyReward;
+    if ( keyItem ) {
+      keyItem.icon.draw(this.ctx, this.keyRewardRect);
+      this.keyRewardRect.draw(this.ctx, keyItem.borderColor);
     }
   }
 }

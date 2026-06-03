@@ -166,12 +166,31 @@ function buildGems() {
   return gems;
 }
 
+// Slot-unlock keys (type "key"): ONE-TIME level rewards. A BLUE key opens a
+// locked synthesizer; a GREEN key opens a locked equipment slot (the player's
+// effect slot first, then each helper). You spend one by dragging it onto a
+// matching locked slot (see Inventory.useKey / InventoryMenu._resolveDrop).
+// Not mergeable, not equippable. Icons are generated procedurally in Game.js.
+const KEYS = {
+  blueKey: {
+    type: "key", color: "blue", value: 0, icon: "key-blue",
+    borderColor: "#5b93ff", toolTipName: "Blue Key",
+    description: "Unlocks one synthesizer. Drag onto a locked synth machine.",
+  },
+  greenKey: {
+    type: "key", color: "green", value: 0, icon: "key-green",
+    borderColor: "#3fe389", toolTipName: "Green Key",
+    description: "Unlocks one equipment slot. Drag onto a locked effect / helper slot.",
+  },
+};
+
 export default class Item {
   static borderColors = {
     weapon: "orange",
     gem: "white",
     fuel: "#cbd5e1",
     boost: "#f0c060",
+    key: "#cfd6e2",
   }
 
   // GEMS DRIVE WEAPONS. There are no separate weapon items: the gem in the
@@ -182,6 +201,7 @@ export default class Item {
   static list = {
     ...buildGems(),
     ...buildHourglasses(),
+    ...KEYS,
     // Fallback when the primary slot is empty: a small, weak white shot that
     // only travels a short distance (the original "basic" gun).
     none: {

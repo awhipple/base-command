@@ -2,12 +2,16 @@
 // (same technique as Game.js#generateEnergyCellIcon), so the gun's APERTURE can
 // morph with the equipped weapon and animate (muzzle flash, reactor pulse).
 //
-// Shape language: a FIXED armored hull (doesn't rotate) + a ROTATING gun
-// assembly with three apertures whose positions match where shots actually
-// spawn in Item.shoot:
-//   • laser   — slim CENTER barrel ending in a focusing lens emitter
-//   • ball    — wide CENTER cannon bore with a charging orb (≠ laser)
-//   • stinger — two thin SIDE barrels at ±TURRET.side(), flashing side-to-side
+// Shape language: a FIXED armored hull (doesn't rotate) + a ROTATING gun. Each
+// weapon loads a visibly DIFFERENT themed aperture (only the equipped weapon's
+// barrels draw, so the silhouette changes with your loadout), with muzzles where
+// shots actually spawn in Item.shoot:
+//   • laser   — a Tesla emitter: coil-banded CENTER barrel + a focusing lens
+//               flanked by electrode prongs that crackle with arcs (no recoil)
+//   • ball    — a heavy machined siege cannon: milled divots + reinforcement
+//               bands + muzzle brake over a dark bore; big recoil kick per shot
+//   • stinger — twin machine-gun SIDE barrels at ±TURRET.side() sharing a solid
+//               breech block they recoil back into (alternating) like an autocannon
 //   • basic   — one modest, dim center barrel (no gem)
 //
 // COLOUR comes from the EFFECT gem, NOT the weapon type: the weapon type is the
@@ -186,79 +190,174 @@ function drawHull(ctx, scale, m, ap, phase) {
   ctx.beginPath(); ctx.arc(0, 0, coreR, 0, Math.PI * 2); ctx.fill();
 }
 
-// The rotating gun: barrels along local +x, muzzles at x≈reach. All three
-// apertures are always present; the active one lights up and the rest recede.
+// The rotating gun. Each weapon loads a visibly DIFFERENT aperture onto the
+// mount — only the equipped weapon's barrels are drawn (so the silhouette
+// changes with your loadout), themed to its role and tinted by the effect
+// colour. Then a common mantlet hub covers the barrel roots.
 function drawGun(ctx, scale, reach, sideOff, weapon, ap, m, flash, flashSide, phase) {
-  var root = 16 * scale;                         // barrels start just past the collar
-  var isStinger = weapon === "stinger";
-  var isLaser = weapon === "laser";
-  var isBall = weapon === "ball";
+  if ( weapon === "laser" )        drawLaserGun(ctx, scale, reach, ap, m, flash, phase);
+  else if ( weapon === "ball" )    drawBallGun(ctx, scale, reach, ap, m, flash, phase);
+  else if ( weapon === "stinger" ) drawStingerGun(ctx, scale, reach, sideOff, ap, m, flash, flashSide, phase);
+  else                             drawBasicGun(ctx, scale, reach, ap, m, flash, phase);
+  drawHub(ctx, scale, ap, m);
+}
 
-  // ── Side barrels (stinger). Lit + extended when stinger is equipped, else
-  //    short, dim, recessed. Drawn at ±sideOff to match the shot spawn. ──────
-  var sideActive = isStinger ? 1 : 0.32;
-  var sideLen = reach * (isStinger ? 0.96 : 0.62);
+// LASER — a Tesla emitter. A coil-wrapped barrel ends in a focusing lens flanked
+// by two electrode prongs; arcs crackle across the fork (faintly idle, fully on
+// a shot). No recoil — it's a beam.
+function drawLaserGun(ctx, scale, reach, ap, m, flash, phase) {
+  var root = 16 * scale, lw = 6 * scale, tip = reach - 10 * scale;
+  metalBarrel(ctx, root, tip, 0, lw, m);
+
+  // Coil bands wrapped around the barrel (rings), faintly energised.
+  for ( var i = 0; i < 4; i++ ) {
+    var bx = root + (tip - root) * (0.22 + i * 0.2);
+    ctx.lineWidth = 2.2 * scale; ctx.strokeStyle = rgba(ap.glow, 0.45);
+    ctx.beginPath(); ctx.ellipse(bx, 0, 2 * scale, lw + 2 * scale, 0, 0, Math.PI * 2); ctx.stroke();
+  }
+  // Charge running up the bore.
+  var pulse = 0.6 + 0.4 * Math.sin(phase * 5);
+  ctx.strokeStyle = rgba(ap.glow, 0.55 * pulse); ctx.lineWidth = 2 * scale; ctx.lineCap = "round";
+  ctx.beginPath(); ctx.moveTo(root + 4 * scale, 0); ctx.lineTo(tip, 0); ctx.stroke();
+
+  // Two electrode prongs (a tuning fork) reaching past the lens, ball-topped.
+  var pBase = tip, pTip = reach + 6 * scale, spread = 11 * scale;
   [-1, 1].forEach(function (s) {
-    ctx.save();
-    ctx.globalAlpha = sideActive;
-    var hw = 5 * scale;
-    metalBarrel(ctx, root, sideLen, s * sideOff, hw, m);
-    var mx = sideLen, my = s * sideOff;
-    if ( isStinger ) {
-      glowDot(ctx, mx, my, hw * 1.5, ap, 0.9);
-    } else {
-      ctx.fillStyle = m.black;
-      ctx.beginPath(); ctx.arc(mx, my, hw * 0.7, 0, Math.PI * 2); ctx.fill();
-    }
-    ctx.restore();
+    ctx.strokeStyle = m.light; ctx.lineWidth = 3 * scale; ctx.lineCap = "round"; ctx.lineJoin = "round";
+    ctx.beginPath();
+    ctx.moveTo(pBase, s * lw * 0.5);
+    ctx.lineTo(pBase + 6 * scale, s * spread);
+    ctx.lineTo(pTip, s * spread);
+    ctx.stroke();
+    ctx.fillStyle = m.hi;
+    ctx.beginPath(); ctx.arc(pTip, s * spread, 2.6 * scale, 0, Math.PI * 2); ctx.fill();
+    glowDot(ctx, pTip, s * spread, 4.5 * scale, ap, 0.9);
   });
-  // Stinger muzzle flash on the side that just fired.
-  if ( isStinger && flash > 0.02 && flashSide !== 0 ) {
-    muzzleFlash(ctx, reach * 0.96, flashSide * sideOff, 9 * scale, ap, flash);
-  }
 
-  // ── Center barrel (laser OR ball — same mount, different muzzle). ─────────
-  var centerActive = isStinger ? 0.45 : 1;
-  ctx.save();
-  ctx.globalAlpha = centerActive;
-  if ( isBall ) {
-    // Heavy cannon: wide bore, charging orb in the mouth.
-    var bw = 12 * scale;
-    metalBarrel(ctx, root, reach - 4 * scale, 0, bw, m);
+  // Focusing lens: concentric rings + hot core.
+  var lensX = reach - 4 * scale;
+  [12, 8.5].forEach(function (rr, i) {
+    ctx.lineWidth = (i === 0 ? 2.5 : 1.5) * scale;
+    ctx.strokeStyle = i === 0 ? m.hi : rgba(ap.glow, 0.9);
+    ctx.beginPath(); ctx.arc(lensX, 0, rr * scale, 0, Math.PI * 2); ctx.stroke();
+  });
+  glowDot(ctx, lensX, 0, 7 * scale, ap, 0.95 * pulse);
+
+  // Tesla arcs across the prong mouth — flickering idle, solid on a shot.
+  var idle = Math.sin(phase * 9) > 0.45;
+  if ( flash > 0.1 || idle ) {
+    var inten = Math.max(flash, idle ? 0.55 : 0);
+    teslaArc(ctx, pTip, -spread, pTip, spread, ap, scale, inten, phase * 17);
+    teslaArc(ctx, lensX, 0, pTip, (flash > 0.1 ? 1 : -1) * spread, ap, scale, inten * 0.8, phase * 13 + 2);
+  }
+  if ( flash > 0.02 ) muzzleFlash(ctx, lensX, 0, 15 * scale, ap, flash);
+}
+
+// BALL — a heavy machined siege cannon. Wide barrel milled with longitudinal
+// divots + reinforcement bands, a muzzle brake around a dark bore holding a
+// charging round. Recoils hard on each shot.
+function drawBallGun(ctx, scale, reach, ap, m, flash, phase) {
+  var recoil = flash * 11 * scale;               // heavy kick straight back
+  var root = 16 * scale - recoil, bw = 14 * scale;
+  var muzzle = reach - 4 * scale - recoil;
+
+  metalBarrel(ctx, root, muzzle, 0, bw, m);
+
+  // Milled longitudinal divots: a dark recessed channel with a lit upper edge.
+  [-1, 0, 1].forEach(function (g) {
+    var gy = g * bw * 0.5;
+    ctx.lineCap = "round";
+    ctx.strokeStyle = rgba("#05080f", 0.7); ctx.lineWidth = 3 * scale;
+    ctx.beginPath(); ctx.moveTo(root + 7 * scale, gy); ctx.lineTo(muzzle - 8 * scale, gy); ctx.stroke();
+    ctx.strokeStyle = rgba(m.hi, 0.4); ctx.lineWidth = 1 * scale;
+    ctx.beginPath(); ctx.moveTo(root + 7 * scale, gy - 1.6 * scale); ctx.lineTo(muzzle - 8 * scale, gy - 1.6 * scale); ctx.stroke();
+  });
+  // Reinforcement bands (raised rings crossing the barrel).
+  [0.32, 0.6].forEach(function (f) {
+    var bx = root + (muzzle - root) * f;
+    ctx.fillStyle = m.mid;
+    roundRect(ctx, bx - 3 * scale, -(bw + 2 * scale), 6 * scale, (bw + 2 * scale) * 2, 2 * scale); ctx.fill();
+    ctx.lineWidth = 1 * scale; ctx.strokeStyle = m.black; ctx.stroke();
+  });
+
+  // Muzzle brake ring + dark bore + charging round.
+  ctx.fillStyle = m.dark;
+  ctx.beginPath(); ctx.arc(muzzle, 0, bw * 1.2, 0, Math.PI * 2); ctx.fill();
+  ctx.lineWidth = 3 * scale; ctx.strokeStyle = m.hi;
+  ctx.beginPath(); ctx.arc(muzzle, 0, bw * 1.2, 0, Math.PI * 2); ctx.stroke();
+  ctx.fillStyle = m.black;
+  ctx.beginPath(); ctx.arc(muzzle, 0, bw * 0.72, 0, Math.PI * 2); ctx.fill();
+  var charge = 0.55 + 0.45 * Math.sin(phase * 4);
+  glowDot(ctx, muzzle, 0, bw * 0.7 * charge + 3 * scale, ap, 0.85 * charge);
+
+  if ( flash > 0.02 ) muzzleFlash(ctx, muzzle, 0, 19 * scale, ap, flash);
+}
+
+// STINGER — twin machine-gun barrels at ±sideOff that share a solid rectangular
+// BREECH BLOCK (distinct from the round hub): it turns with the gun and stays put
+// while each barrel recoils back INTO it (they alternate), like an autocannon.
+// Reads as one sturdy receiver instead of two thin barrels off the centrepiece.
+function drawStingerGun(ctx, scale, reach, sideOff, ap, m, flash, flashSide, phase) {
+  var hw = 5 * scale;                                 // a touch beefier than before
+  var blkBack = 6 * scale, blkFront = 52 * scale;     // breech block extent (fixed)
+  var recoilOf = function (s) { return (s === flashSide ? flash : 0) * 11 * scale; };
+
+  // 1) Barrels (each recoils independently). Drawn first so the block covers
+  //    their rear ends — as a barrel recoils, its exposed length slides into it.
+  [-1, 1].forEach(function (s) {
+    var recoil = recoilOf(s), firing = (s === flashSide);
+    var root = 12 * scale - recoil, muzzle = reach * 0.98 - recoil;
+    metalBarrel(ctx, root, muzzle, s * sideOff, hw, m);
+    // Barrel detailing FIXED to the barrel (root-relative) so it rides with the
+    // recoil: a dark base collar near the rear that slides back UNDER the breech
+    // block as the barrel retracts (and re-emerges as it returns), plus two
+    // cooling vents ahead of it. The block (drawn next) covers whatever slides in.
+    [ { off: 46, w: 4 }, { off: 70, w: 2.8 }, { off: 92, w: 2.8 } ].forEach(function (nz) {
+      var nx = root + nz.off * scale;
+      ctx.fillStyle = rgba("#05080f", 0.82);
+      roundRect(ctx, nx - nz.w / 2 * scale, s * sideOff - hw * 0.6, nz.w * scale, hw * 1.2, 1 * scale); ctx.fill();
+    });
+    // Muzzle ring + tip glow (brighter on the firing barrel).
     ctx.fillStyle = m.dark;
-    ctx.beginPath(); ctx.arc(reach - 4 * scale, 0, bw * 1.15, 0, Math.PI * 2); ctx.fill();
-    ctx.lineWidth = 2.5 * scale; ctx.strokeStyle = m.hi;
-    ctx.beginPath(); ctx.arc(reach - 4 * scale, 0, bw * 1.15, 0, Math.PI * 2); ctx.stroke();
-    var charge = 0.6 + 0.4 * Math.sin(phase * 4);
-    glowDot(ctx, reach - 4 * scale, 0, bw * (0.7 + 0.15 * charge), ap, 0.9 * charge);
-  } else {
-    // Slim barrel for laser/basic; laser ends in a focusing lens emitter.
-    var lw = isLaser ? 7 * scale : 5.5 * scale;
-    metalBarrel(ctx, root, reach - (isLaser ? 8 * scale : 3 * scale), 0, lw, m);
-    if ( isLaser ) {
-      [13, 9.5].forEach(function (rr, i) {
-        ctx.lineWidth = (i === 0 ? 2.5 : 1.5) * scale;
-        ctx.strokeStyle = i === 0 ? m.hi : rgba(ap.glow, 0.9);
-        ctx.beginPath(); ctx.arc(reach - 6 * scale, 0, rr * scale, 0, Math.PI * 2); ctx.stroke();
-      });
-      var lpulse = 0.7 + 0.3 * Math.sin(phase * 5);
-      ctx.strokeStyle = rgba(ap.glow, 0.5 * lpulse);
-      ctx.lineWidth = 2 * scale; ctx.lineCap = "round";
-      ctx.beginPath(); ctx.moveTo(root + 4 * scale, 0); ctx.lineTo(reach - 8 * scale, 0); ctx.stroke();
-      glowDot(ctx, reach - 6 * scale, 0, 6.5 * scale, ap, 0.95 * lpulse);
-    } else {
-      glowDot(ctx, reach - 3 * scale, 0, 4 * scale, ap, 0.5);
-    }
-  }
-  ctx.restore();
+    ctx.beginPath(); ctx.arc(muzzle, s * sideOff, hw * 1.1, 0, Math.PI * 2); ctx.fill();
+    ctx.lineWidth = 1.5 * scale; ctx.strokeStyle = m.hi;
+    ctx.beginPath(); ctx.arc(muzzle, s * sideOff, hw * 1.1, 0, Math.PI * 2); ctx.stroke();
+    glowDot(ctx, muzzle, s * sideOff, hw * 1.4, ap, firing ? 1 : 0.55);
+  });
 
-  // Center muzzle flash (laser/ball/basic fire from centre).
-  if ( !isStinger && flash > 0.02 ) {
-    muzzleFlash(ctx, reach - (isBall ? 4 * scale : 6 * scale), 0, (isBall ? 16 : 13) * scale, ap, flash);
-  }
+  // 2) The shared breech block both barrels slide into (drawn over their roots).
+  var halfH = sideOff + hw + 5 * scale;
+  var g = ctx.createLinearGradient(0, -halfH, 0, halfH);
+  g.addColorStop(0, m.hi); g.addColorStop(0.45, m.light); g.addColorStop(0.55, m.mid); g.addColorStop(1, m.dark);
+  ctx.fillStyle = g;
+  roundRect(ctx, blkBack, -halfH, blkFront - blkBack, halfH * 2, 5 * scale); ctx.fill();
+  ctx.lineWidth = 2 * scale; ctx.strokeStyle = m.black; ctx.stroke();
+  // Front-face seam + corner rivets. (No fixed barrel ports — the barrels slide
+  // under the block's front edge, each with its own base collar moving in/out.)
+  ctx.strokeStyle = rgba("#05080f", 0.45); ctx.lineWidth = 1.5 * scale;
+  ctx.beginPath(); ctx.moveTo(blkFront - 7 * scale, -halfH + 5 * scale); ctx.lineTo(blkFront - 7 * scale, halfH - 5 * scale); ctx.stroke();
+  [-1, 1].forEach(function (s) {
+    ctx.fillStyle = rgba(m.hi, 0.7);
+    ctx.beginPath(); ctx.arc(blkBack + 6 * scale, s * (halfH - 5 * scale), 1.6 * scale, 0, Math.PI * 2); ctx.fill();
+  });
 
-  // ── Mantlet hub covering the barrel roots (drawn last so barrels emerge from
-  //    under it), with an EFFECT-colour status light on top. ─────────────────
+  // 3) Muzzle flash on the firing barrel (on top of everything).
+  if ( flash > 0.02 && flashSide !== 0 ) {
+    muzzleFlash(ctx, reach * 0.98 - recoilOf(flashSide), flashSide * sideOff, 9 * scale, ap, flash);
+  }
+}
+
+// BASIC — a single plain barrel (no gem loaded). Dim, uncharged.
+function drawBasicGun(ctx, scale, reach, ap, m, flash, phase) {
+  var root = 16 * scale, lw = 5.5 * scale, muzzle = reach - 3 * scale;
+  metalBarrel(ctx, root, muzzle, 0, lw, m);
+  glowDot(ctx, muzzle, 0, 4 * scale, ap, 0.5);
+  if ( flash > 0.02 ) muzzleFlash(ctx, muzzle, 0, 11 * scale, ap, flash);
+}
+
+// The mantlet hub over the barrel roots (drawn last so barrels emerge from under
+// it / recoil back into it), with an EFFECT-colour status light.
+function drawHub(ctx, scale, ap, m) {
   var hubR = 22 * scale;
   var hub = ctx.createRadialGradient(-hubR * 0.3, -hubR * 0.3, hubR * 0.1, 0, 0, hubR);
   hub.addColorStop(0, m.light);
@@ -269,6 +368,24 @@ function drawGun(ctx, scale, reach, sideOff, weapon, ap, m, flash, flashSide, ph
   ctx.lineWidth = 2 * scale; ctx.strokeStyle = m.black;
   ctx.beginPath(); ctx.arc(0, 0, hubR, 0, Math.PI * 2); ctx.stroke();
   glowDot(ctx, hubR * 0.5, 0, 3 * scale, ap, 0.9);
+}
+
+// A jagged electric arc between two points (Tesla crackle). Deterministic wiggle
+// driven by `seed` so it animates without per-frame randomness.
+function teslaArc(ctx, x1, y1, x2, y2, ap, scale, intensity, seed) {
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  ctx.strokeStyle = rgba(ap.hot, 0.85 * intensity);
+  ctx.lineWidth = 1.3 * scale; ctx.lineCap = "round";
+  var nx = -(y2 - y1), ny = (x2 - x1), nl = Math.hypot(nx, ny) || 1; nx /= nl; ny /= nl;
+  ctx.beginPath(); ctx.moveTo(x1, y1);
+  for ( var i = 1; i < 4; i++ ) {
+    var t = i / 4, jx = x1 + (x2 - x1) * t, jy = y1 + (y2 - y1) * t;
+    var off = Math.sin(seed + i * 2.3) * 3.2 * scale * (i % 2 ? 1 : -1);
+    ctx.lineTo(jx + nx * off, jy + ny * off);
+  }
+  ctx.lineTo(x2, y2); ctx.stroke();
+  ctx.restore();
 }
 
 // A shaded metal tube from x0..x1 centred on y=cy, half-width hw.

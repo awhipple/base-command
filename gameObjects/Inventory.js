@@ -38,6 +38,18 @@ export default class Inventory {
       yellowGem: { loaded: null, fuel: 0, level: 1, xp: 0, burstQueue: [] },
     };
 
+    // ── Slot-unlock progression ──────────────────────────────────────────────
+    // Everything except the primary weapon slot starts LOCKED. The three synth
+    // machines need a BLUE key each; the player's effect slot + the two helpers
+    // need a GREEN key each (3 of each = the 6 one-time level rewards). Helpers
+    // stay HIDDEN until the effect slot is unlocked (the UI gates that, see
+    // InventoryMenu / Equipment). `true` = locked. You open a lock by dragging a
+    // matching key onto it (useKey). Persisted in the save snapshot.
+    this.locks = {
+      redGem: true, blueGem: true, yellowGem: true,    // synth machines  ← blue key
+      effect: true, helperLeft: true, helperRight: true, // equip slots    ← green key
+    };
+
     // One-time starter bonus: the FIRST hourglass burned on this save delivers
     // double fuel (a bare T1 → exactly one gem). Persisted in the save snapshot.
     this.firstHourglassBonusUsed = false;
@@ -92,6 +104,43 @@ export default class Inventory {
     this.engine.trigger("saveRequested");
   }
 
+  // ── Slot locks ──────────────────────────────────────────────────────────────
+  // Which lock (if any) gates an EQUIP slot. The primary weapon slot is always
+  // open (null); the effect slot is its own lock; each helper's weapon+effect
+  // pair shares ONE lock (helperLeft / helperRight).
+  static EQUIP_LOCK = {
+    effect: "effect",
+    left: "helperLeft", leftEffect: "helperLeft",
+    right: "helperRight", rightEffect: "helperRight",
+  };
+  equipLockFor(slot) { return Inventory.EQUIP_LOCK[slot] ?? null; }
+
+  // Is lock `key` engaged? Unknown keys (e.g. "primary") are never locked.
+  isLocked(key) { return !!this.locks[key]; }
+
+  // Spend a key item to OPEN a lock. Blue keys open synth locks (red/blue/yellowGem);
+  // green keys open equip locks (effect / helperLeft / helperRight). Returns true
+  // (and consumes the key) only if the key colour matches the lock and it was shut.
+  useKey(keyItem, lockKey) {
+    if ( !keyItem || !this.locks[lockKey] ) return false;
+    var isSynth = lockKey === "redGem" || lockKey === "blueGem" || lockKey === "yellowGem";
+    var need = isSynth ? "blueKey" : "greenKey";
+    if ( keyItem.name !== need ) return false;
+    this.locks[lockKey] = false;
+    this.remove(keyItem);
+    this.engine.trigger("saveRequested");
+    return true;
+  }
+
+  // Dev cheat: open every lock AND remove all key items (the matching level-reward
+  // disable lives in Levels.disableKeyRewards, called alongside this). Lets you
+  // skip the key grind and jump straight to a fully-equippable loadout.
+  unlockAll() {
+    for ( var k in this.locks ) this.locks[k] = false;
+    this.items = this.items.filter(i => i && i.type !== "key");
+    this.sort();   // refresh grid + save
+  }
+
   // Dev cheat: grant one energy cell of every tier PLUS an extra of the top tier,
   // so they fill exactly one inventory row (8) and show the whole ramp at a
   // glance. Repeatable — each call adds another set.
@@ -115,6 +164,7 @@ export default class Inventory {
       m.loaded = null; m.fuel = 0; m.level = 1; m.xp = 0; m.burstQueue = [];
     }
     this.firstHourglassBonusUsed = false;
+    for ( var lk in this.locks ) this.locks[lk] = true;   // re-lock every slot
     this.sort();   // filters/sorts, then triggers openInventory + saveRequested
   }
 
@@ -170,12 +220,20 @@ export default class Inventory {
     }
   }
 
-  // Can `item` legally occupy `ref`? Equip slots take any GEM; a synth slot takes
-  // only a gem of its OWN colour; inventory holds anything. null always fits.
+  // Can `item` legally occupy `ref`? A LOCKED slot rejects everything (you open it
+  // with a key, handled separately). Otherwise equip slots take any GEM; a synth
+  // slot takes only a gem of its OWN colour; inventory holds anything. null fits.
   canHold(ref, item) {
     if ( !item ) return true;
-    if ( ref.kind === "equip" ) return item.type === "gem";
-    if ( ref.kind === "synth" ) return item.type === "gem" && item.color + "Gem" === ref.slot;
+    if ( ref.kind === "equip" ) {
+      var lk = this.equipLockFor(ref.slot);
+      if ( lk && this.isLocked(lk) ) return false;   // slot still locked
+      return item.type === "gem";
+    }
+    if ( ref.kind === "synth" ) {
+      if ( this.isLocked(ref.slot) ) return false;    // machine still locked
+      return item.type === "gem" && item.color + "Gem" === ref.slot;
+    }
     return true;
   }
 

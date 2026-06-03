@@ -5,7 +5,7 @@ import { UIComponent } from "../../engine/gfx/ui/window/UIComponent.js";
 import Item, { GEM_MAX_TIER, BURST_SECONDS } from "../Item.js";
 import CrackleBed from "../../engine/CrackleBed.js";
 import { drawTurret, weaponTypeOf, effectColorOf } from "../TurretSprite.js";
-import { roundedRectPath } from "./canvas.js";
+import { roundedRectPath, drawLock } from "./canvas.js";
 import EffectRect from "../effects/EffectRect.js";
 import FlyingGem from "../effects/FlyingGem.js";
 import Banner from "./Banner.js";
@@ -53,6 +53,11 @@ function levelGems(level) { return LEVEL_GEMS[level] ?? LEVEL_GEMS_DEFAULT; }
 // Helper turrets fire at half damage AND half rate (mirrors Helper.FIRE_MULT /
 // DAMAGE_MULT) and ignore the effect gem — used for the helper hover readout.
 const HELPER_MULT = 0.5;
+
+// Display tint per synth, by its output-gem colour — used to frame a LOCKED synth
+// in its own colour so you can see which slot you're about to unlock (not blind-
+// pick). Brighter than the raw gem so it reads on the dark machine body.
+const SYNTH_TINT = { redGem: "#ff6b6b", blueGem: "#7dd3fc", yellowGem: "#ffd84d" };
 
 // White merge-flash duration (frames) shared by ALL three drop regions (inventory
 // grid, synth slots, equip slots) so every merge feels identical. ~0.8s at 60fps.
@@ -175,6 +180,29 @@ export default class InventoryMenu extends UIWindow {
       return;
     }
 
+    // A KEY dropped on a matching LOCKED slot spends it to OPEN that slot — also a
+    // special action, not a move. Blue → a locked synth machine; green → a locked
+    // equip lock (effect / helper). Wrong colour or not over a lock → snap back.
+    if ( drag.type === "key" ) {
+      var opened = null;
+      if ( drag.name === "blueKey" && this._synth && this._synth.hoverMachine &&
+           inv.isLocked(this._synth.hoverMachine) ) {
+        if ( inv.useKey(drag, this._synth.hoverMachine) ) opened = this._synth.hoverMachine;
+      } else if ( drag.name === "greenKey" && this._equip && this._equip.lockHover &&
+                  inv.isLocked(this._equip.lockHover) ) {
+        if ( inv.useKey(drag, this._equip.lockHover) ) opened = this._equip.lockHover;
+      }
+      if ( opened ) {
+        this.engine.register(new EffectRect(this.engine, this.engine.globals.cursor.rect, {
+          color: drag.borderColor, icon: drag.icon, grow: -0.6, fade: 0.06,
+        }));
+        this.engine.sounds.play("chime", { volume: 0.5 });
+        this.engine.trigger("openInventory");
+        this.engine.trigger("saveRequested");
+      }
+      return;
+    }
+
     // Otherwise it's a slot move. Pick the hovered target by region priority.
     var target = (this._equip && this._equip.dropRef())
               || (this._synth && this._synth.dropRef())
@@ -196,6 +224,10 @@ export default class InventoryMenu extends UIWindow {
     } else if ( target.kind === "equip" ) {
       this.engine.trigger("itemEquipped");   // move/swap into an equip slot
     }
+
+    // Changing any equipped weapon/effect closes an open stat readout so the new
+    // turret art is immediately visible.
+    if ( target.kind === "equip" && this._equip ) this._equip.focus = null;
 
     this.engine.trigger("openInventory");        // rebuild the grid's icon rects
     this.engine.trigger("saveRequested");
@@ -646,6 +678,49 @@ class Synthesis extends UIComponent {
   // White merge-flash on a machine's fuel slot (matches the inventory grid pulse).
   flashSlot(gem) { this.slotFlash[gem] = SLOT_FLASH_FRAMES; }
 
+  // A LOCKED synth. The body is a big BLUE padlock on a rectangle TINTED in the
+  // synth's gem colour (red/blue/yellow), and the small fuel slot below shows that
+  // synth's gem icon — together telling you which colour you're about to unlock.
+  // The frame brightens + glows when a blue key is hovering it.
+  _drawLockedMachine(ctx, m, drag) {
+    var BLUE = "#5b93ff";
+    var tint = SYNTH_TINT[m.gem] || BLUE;
+    var r = m.body, sl = m.slot;
+    var keyHover = drag && drag.name === "blueKey" && this.hoverMachine === m.gem;
+    var gemIcon = this.engine.images.get(Item.list[m.gem].icon);
+
+    // Body — gem-colour-tinted rectangle with a large central padlock (no gem here).
+    ctx.save();
+    ctx.fillStyle = "#0b0f17";
+    ctx.fillRect(r.x, r.y, r.w, r.h);
+    ctx.globalAlpha = 0.3;                    // wash the rect in the gem colour
+    ctx.fillStyle = tint;
+    ctx.fillRect(r.x, r.y, r.w, r.h);
+    ctx.globalAlpha = 1;
+    ctx.lineWidth = 2.5;
+    if ( keyHover ) { ctx.shadowColor = tint; ctx.shadowBlur = 12; }
+    ctx.strokeStyle = keyHover ? "#ffffff" : tint;
+    ctx.strokeRect(r.x, r.y, r.w, r.h);
+    ctx.shadowBlur = 0;
+    ctx.restore();
+    drawLock(ctx, r.x + r.w / 2, r.y + r.h / 2, 34, BLUE, { hover: keyHover });
+
+    // Fuel slot — gem-tinted frame with the synth's gem icon (the colour cue).
+    ctx.save();
+    ctx.fillStyle = "#0c0c12";
+    ctx.fillRect(sl.x, sl.y, sl.w, sl.h);
+    ctx.globalAlpha = 0.9;
+    gemIcon.draw(ctx, sl.x + 4, sl.y + 4, sl.w - 8, sl.h - 8);
+    ctx.globalAlpha = 1;
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = keyHover ? BLUE : tint;
+    ctx.strokeRect(sl.x, sl.y, sl.w, sl.h);
+    ctx.restore();
+
+    Text.draw(ctx, "Blue Key", sl.x + sl.w / 2, sl.y + sl.h + 4,
+      { fontSize: 10, fontColor: keyHover ? "#bcd3ff" : "#6f86b8", center: true });
+  }
+
   // Idle fuel/sec from the loaded gem (0 if empty) — no base rate. In sub-fuel
   // units this is ALSO the exact per-frame idle drip (see FUEL_SCALE).
   _idleFuel(st) {
@@ -686,6 +761,7 @@ class Synthesis extends UIComponent {
   // the amount. Total time = Σ(left/rate); the rate readout follows the head.
   burn(item) {
     if ( !this.hoverMachine ) return;
+    if ( this.inventory.isLocked(this.hoverMachine) ) return;   // can't fuel a locked synth
     var m = this.machines.find(x => x.gem === this.hoverMachine);
     var st = this.inventory.machines[this.hoverMachine];
     if ( !m || !st ) return;
@@ -760,7 +836,7 @@ class Synthesis extends UIComponent {
     // another slot to move/merge) — just like the equipment slots. The gem stays
     // in place until a valid drop.
     var m = this.machines.find(x => x.slot && x.slot.contains(event.pos));
-    if ( !m ) return;
+    if ( !m || this.inventory.isLocked(m.gem) ) return;   // no pickup from a locked synth
     var st = this.inventory.machines[m.gem];
     if ( st && st.loaded ) {
       this.engine.globals.dragItem = new Item(this.engine, st.loaded.name);
@@ -775,6 +851,7 @@ class Synthesis extends UIComponent {
     this.machines.forEach(m => {
       var st = this.inventory.machines[m.gem];
       if ( !st ) return;
+      if ( this.inventory.isLocked(m.gem) ) return;   // locked synth: inert (no idle/burst/output)
       st.level = st.level || 1;
       st.xp = st.xp || 0;
       st.fuel = st.fuel || 0;
@@ -839,6 +916,7 @@ class Synthesis extends UIComponent {
     var boostHover = drag && drag.type === "boost";
 
     this.machines.forEach(m => {
+      if ( this.inventory.isLocked(m.gem) ) { this._drawLockedMachine(ctx, m, drag); return; }
       var st = this.inventory.machines[m.gem] || { fuel: 0 };
       var level = st.level || 1, xp = st.xp || 0;
       var surging = (st.burstQueue?.length || 0) > 0;
@@ -1035,10 +1113,35 @@ class Equipment extends UIComponent {
       right: label("Helper", helperX.right - size/2, helperSlotY - 16, Equipment.HELPER_LABEL),
     };
 
+    // Lock hit-regions. The effect lock sits on the effect slot; each helper lock
+    // covers that helper's whole (weapon+effect) pair as ONE region — unlocking it
+    // reveals both slots. Visibility is driven by Inventory.locks (see _drawLocks).
+    var union = (a, b) => {
+      var x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
+      return new BoundingRect(x, y, Math.max(a.x + a.w, b.x + b.w) - x, Math.max(a.y + a.h, b.y + b.h) - y);
+    };
+    this.lockRects = {
+      effect: this.equipSlots.effect,
+      helperLeft: union(this.equipSlots.left, this.equipSlots.leftEffect),
+      helperRight: union(this.equipSlots.right, this.equipSlots.rightEffect),
+    };
+    this.lockHover = null;
+
     // Current-weapon badge on the base's chest: SHAPE = weapon type (from the
-    // primary gem), COLOUR = the effect gem's colour. Hover it for live stats.
+    // primary gem), COLOUR = the effect gem's colour. Tap it (or the turret) for
+    // the live stat readout.
     this.weaponBadge = { x: W / 2, y: 112, r: 22 };
-    this.weaponIconRect = new BoundingRect(W / 2 - 24, 112 - 24, 48, 48);
+
+    // Tap targets for the live stat readouts. The player turret + its weapon
+    // badge open the main readout; each helper turret opens its own. A readout
+    // shows only while focused and dismisses on a tap elsewhere, so the turret
+    // art stays visible. (Component-local coords, like the slots above.)
+    this.focus = null;   // null | "player" | "left" | "right"
+    this.playerHit = new BoundingRect(W / 2 - 50, 86, 100, H - 86);
+    this.helperHit = {
+      left:  new BoundingRect(helperX.left  - 34, H - 66, 68, 66),
+      right: new BoundingRect(helperX.right - 34, H - 66, 68, 66),
+    };
 
     // Equip slots behave like inventory slots (drop on empty = equip, matching gem
     // = merge, different = swap) — but that logic now lives in inventory.resolveDrop,
@@ -1052,8 +1155,16 @@ class Equipment extends UIComponent {
   flashSlot(slot) { this.equipFlash[slot] = SLOT_FLASH_FRAMES; }
 
   onMouseClick(event) {
-    // Pick up the equipped gem to drag it (out to inventory = unequip; onto
-    // another slot = move/merge). No more click-to-unequip.
+    // Tap the turret art or the weapon badge to open its live stat readout; tap
+    // anywhere else to lose focus (close it). NOT a toggle — tapping the same
+    // target keeps it open. (On mobile the engine fires an onMouseMove just
+    // before this, so the hover flags below are fresh.)
+    if ( this._hoverHelper && this._helperVisible(this._hoverHelper) ) { this.focus = this._hoverHelper; return; }
+    if ( this._hoverPlayer ) { this.focus = "player"; return; }
+    this.focus = null;
+
+    // Otherwise pick up the equipped gem to drag it (out to inventory = unequip;
+    // onto another slot = move/merge). No more click-to-unequip.
     if ( this.equipHover && this.equipment[this.equipHover] ) {
       this.engine.globals.dragItem = this.equipment[this.equipHover];
       this.engine.globals.dragSource = { kind: "equip", slot: this.equipHover };
@@ -1061,7 +1172,26 @@ class Equipment extends UIComponent {
   }
 
   onMouseMove(event) {
-    this.weaponHover = this.weaponIconRect.contains(event.pos);
+    // Readout tap targets (the turret art + weapon badge). weaponHover lights the
+    // badge when the player turret is under the cursor.
+    this._hoverPlayer = this.playerHit.contains(event.pos);
+    this._hoverHelper = this.helperHit.left.contains(event.pos) ? "left"
+                      : this.helperHit.right.contains(event.pos) ? "right" : null;
+    this.weaponHover = this._hoverPlayer;
+
+    // Which lock is under the cursor (for key-drop targeting + hover glow). The
+    // effect lock shows while effect is locked; the helper locks appear only once
+    // effect is unlocked (helpers are hidden until then).
+    var inv = this.inventory;
+    this.lockHover = null;
+    if ( inv.isLocked("effect") ) {
+      if ( this.lockRects.effect.contains(event.pos) ) this.lockHover = "effect";
+    } else if ( inv.isLocked("helperLeft") && this.lockRects.helperLeft.contains(event.pos) ) {
+      this.lockHover = "helperLeft";
+    } else if ( inv.isLocked("helperRight") && this.lockRects.helperRight.contains(event.pos) ) {
+      this.lockHover = "helperRight";
+    }
+
     for ( var key in this.equipment ) {
       var slot = this.equipSlots[key];
       slot.hover = slot.contains(event.pos);
@@ -1073,6 +1203,66 @@ class Equipment extends UIComponent {
       }
       this.equipHover = null;
     }
+  }
+
+  update() {
+    // Pointer cursor over a tappable readout target (desktop affordance).
+    if ( this._hoverPlayer || this._hoverHelper ) this.engine.cursor = "pointer";
+  }
+
+  // Lifecycle: drop any open readout when the panel hides, so reopening starts
+  // on the turret art rather than a stuck-open tooltip.
+  hide() {
+    this.focus = null;
+  }
+
+  // A helper turret + its slots are VISIBLE only once the effect slot is unlocked
+  // (helpers stay hidden until then) AND that helper's own lock is open.
+  _helperVisible(side) {
+    if ( this.inventory.isLocked("effect") ) return false;
+    return !this.inventory.isLocked(side === "left" ? "helperLeft" : "helperRight");
+  }
+
+  // Should an equip SLOT be drawn? primary always; effect once unlocked; helper
+  // slots only when that helper is visible (so we draw the lock instead while shut).
+  _slotVisible(key) {
+    var lk = this.inventory.equipLockFor(key);
+    if ( !lk ) return true;                              // primary — always open
+    if ( lk === "effect" ) return !this.inventory.isLocked("effect");
+    return this._helperVisible(key.indexOf("left") === 0 ? "left" : "right");
+  }
+
+  // Draw whichever locks are currently engaged + relevant: the effect lock while
+  // effect is shut; otherwise each still-locked helper lock. Green padlocks; the
+  // one a held green key is hovering brightens.
+  _drawLocks() {
+    var ctx = this.ctx, inv = this.inventory;
+    var drag = this.engine.globals.dragItem;
+    var greenHover = drag && drag.name === "greenKey";
+    if ( inv.isLocked("effect") ) {
+      this._drawEquipLock(ctx, this.lockRects.effect, greenHover && this.lockHover === "effect", "Effect");
+    } else {
+      if ( inv.isLocked("helperLeft") )
+        this._drawEquipLock(ctx, this.lockRects.helperLeft, greenHover && this.lockHover === "helperLeft", "Helper");
+      if ( inv.isLocked("helperRight") )
+        this._drawEquipLock(ctx, this.lockRects.helperRight, greenHover && this.lockHover === "helperRight", "Helper");
+    }
+  }
+
+  _drawEquipLock(ctx, r, hover, label) {
+    var GREEN = "#3fe389";
+    ctx.save();
+    ctx.fillStyle = "rgba(10,16,12,0.82)";
+    ctx.fillRect(r.x, r.y, r.w, r.h);
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = hover ? GREEN : "#1f5a38";
+    ctx.strokeRect(r.x, r.y, r.w, r.h);
+    ctx.restore();
+    if ( label ) Text.draw(ctx, label, r.x + r.w / 2, r.y - 14,
+      { fontSize: 11, fontColor: Equipment.HELPER_LABEL, center: true });
+    drawLock(ctx, r.x + r.w / 2, r.y + r.h / 2, 30, GREEN, { hover });
+    Text.draw(ctx, "Green Key", r.x + r.w / 2, r.y + r.h + 3,
+      { fontSize: 10, fontColor: hover ? "#bff5d6" : "#5fae84", center: true });
   }
 
   // Weapon "kind" from the primary gem's projectile flags (colour-agnostic).
@@ -1241,6 +1431,7 @@ class Equipment extends UIComponent {
       weapon: weaponTypeOf(eq.primary), effectColor: effectColorOf(eq.effect), phase: 0.4,
     });
     ["left", "right"].forEach(s => {
+      if ( !this._helperVisible(s) ) return;   // hidden until effect + this helper are unlocked
       drawTurret(this.ctx, {
         x: this.helperDrawX[s], y: this.height, aim: up, scale: 0.45, tint: "#35c9d6",
         weapon: weaponTypeOf(eq[s]), effectColor: effectColorOf(eq[s + "Effect"]), phase: 0.4,
@@ -1248,6 +1439,7 @@ class Equipment extends UIComponent {
     });
     this.borderRect.draw(this.ctx);
     for ( var key in this.equipment ) {
+      if ( !this._slotVisible(key) ) continue;   // locked/hidden → a lock is drawn instead
       var slot = this.equipSlots[key];
       var equip = this.equipment[key];
       equip?.icon.draw(this.ctx, slot);
@@ -1273,6 +1465,9 @@ class Equipment extends UIComponent {
       }
     }
 
+    // Locks over any still-shut slots (drawn after the open slots so they sit on top).
+    this._drawLocks();
+
     // (The effect's description lives in the weapon-badge tooltip now; the badge
     // colour conveys the equipped effect, so no text beside the effect slot.)
 
@@ -1281,25 +1476,27 @@ class Equipment extends UIComponent {
     // (chain trades per-hit damage for free reach), nothing when ~0.
     var dmgMod = b => Math.abs(b) <= 0.001 ? "" : " (" + (b < 0 ? "−" : "+") + fmt(Math.abs(b)) + ")";
 
-    // Current-weapon badge (shape = type, colour = effect). The player's weapon
-    // readout is ALWAYS shown (not just on hover); helper readouts are on-hover.
+    // Current-weapon badge (shape = type, colour = effect) — always visible as
+    // the tappable weapon icon on the turret. The stat READOUT shows only while
+    // focused (tap the turret or badge); tap off to dismiss, so the turret art
+    // stays visible when you're admiring/swapping weapons.
     var stats = this._weaponStats();
     var badgeColor = stats.effectColor ?? "#cfd6e2";
-    this._drawWeaponBadge(this.ctx, this.weaponBadge, stats.type, badgeColor, this.weaponHover);
+    this._drawWeaponBadge(this.ctx, this.weaponBadge, stats.type, badgeColor, this.weaponHover || this.focus === "player");
 
-    var lines = [
-      { t: stats.name, c: badgeColor },
-      { t: "Dmg " + fmt(stats.base) + dmgMod(stats.bonus), c: "#e8edf6" },
-      { t: "Rate " + fmt(stats.rate) + "/s", c: "#e8edf6" },
-    ];
-    (stats.effectLines || []).forEach(t => lines.push({ t, c: stats.effectColor ?? "#cbd5e1" }));
-    this._drawReadout(lines, this.weaponBadge.x, this.weaponBadge.y + this.weaponBadge.r + 6, badgeColor);
+    if ( this.focus === "player" ) {
+      var lines = [
+        { t: stats.name, c: badgeColor },
+        { t: "Dmg " + fmt(stats.base) + dmgMod(stats.bonus), c: "#e8edf6" },
+        { t: "Rate " + fmt(stats.rate) + "/s", c: "#e8edf6" },
+      ];
+      (stats.effectLines || []).forEach(t => lines.push({ t, c: stats.effectColor ?? "#cbd5e1" }));
+      this._drawReadout(lines, this.weaponBadge.x, this.weaponBadge.y + this.weaponBadge.r + 6, badgeColor);
+    }
 
-    // Hovering EITHER of a helper's slots (weapon or effect) shows that turret's
-    // combined stats (half dmg / rate + its effect). On-hover only, so the two
-    // helper readouts don't blanket the bottom of the panel.
-    var helperSide = (this.equipHover === "left" || this.equipHover === "leftEffect") ? "left"
-                   : (this.equipHover === "right" || this.equipHover === "rightEffect") ? "right" : null;
+    // Helper readout — shows only while that helper's turret is focused (tap the
+    // helper turret); tap off to dismiss.
+    var helperSide = (this.focus === "left" || this.focus === "right") ? this.focus : null;
     if ( helperSide ) {
       var hs = this._helperStats(helperSide);
       var hlines = hs.none

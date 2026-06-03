@@ -18,6 +18,8 @@ import Lightning from "./engine/gfx/effects/Lightning.js";
 import Image from "./engine/gfx/Image.js";
 import { whiteCircle, blueCircle } from "./gameObjects/effects/ParticleSprites.js";
 import SettingsScreen from "./gameObjects/ui/SettingsScreen.js";
+import CreditsScreen from "./gameObjects/ui/CreditsScreen.js";
+import Starfield from "./gameObjects/effects/Starfield.js";
 import * as SaveStore from "./gameObjects/SaveStore.js";
 
 export default class Game {
@@ -56,6 +58,10 @@ export default class Game {
     for ( var t = 1; t <= HOURGLASS_MAX_TIER; t++ ) {
       this.engine.images.save(this.generateEnergyCellIcon(t, HOURGLASS_MAX_TIER), "hourglass-" + t);
     }
+
+    // Slot-unlock key icons: BLUE opens synth machines, GREEN opens equip slots.
+    this.engine.images.save(this.generateKeyIcon("blue"),  "key-blue");
+    this.engine.images.save(this.generateKeyIcon("green"), "key-green");
 
     [
       [whiteCircle, "white-part-circle"],
@@ -101,6 +107,11 @@ export default class Game {
       this._restoreSave();
       this._installAutosave();
 
+      // Drifting starfield behind everything — the level backdrop (z = -1000).
+      // The title screen paints over it with its own opaque black, so it only
+      // shows once you're in a level (and the credits crawl reuses the look).
+      this.engine.register(new Starfield(this.engine));
+
       this.engine.register(this.engine.globals.base = new Base(engine), "base");
 
       // Two side helper turrets flanking the base (left + right equip slots).
@@ -142,14 +153,38 @@ export default class Game {
         dev: this.engine.dev,
         onCheatEnergy: () => { this.inventory.cheat();     revealInventory(); },
         onCheatGems:   () => { this.inventory.cheatGems(); revealInventory(); },
+        onUnlockAll:   () => {
+          this.inventory.unlockAll();                  // open every lock + drop keys
+          this.engine.globals.levels.disableKeyRewards();   // stop keys dropping
+          // Stay on the Settings screen (unlike the other cheats) so you can then
+          // hit Cheat: Energy / Gems; the button flips to "Unlocked" on its own.
+        },
+        // The "Credits" button is unlocked once the last level has been beaten.
+        showCredits: () => !!this.creditsSeen,
+        onCredits: () => {
+          this.settingsScreen.hide = true;   // dismiss the modal...
+          this.creditsScreen.show();          // ...and replay the crawl (onDone reopens the menu)
+        },
       });
       this.engine.register(this.settingsScreen);
+
+      // First-clear-only victory crawl (the `creditsSeen` flag is persisted).
+      // onDone returns the player to the title screen the way a normal level
+      // win does.
+      this.creditsScreen = new CreditsScreen(this.engine, {
+        onDone: () => {
+          this.menu.hide = false;
+          this.inventoryMenu.hide = false;
+        },
+      });
+      this.engine.register(this.creditsScreen);
 
       this.engine.on("openSettings", () => {
         this._priorMenuHide = this.menu.hide;
         this._priorInvHide = this.inventoryMenu.hide;
         this.menu.hide = true;
         this.inventoryMenu.hide = true;
+        this.settingsScreen.rebuild();   // pick up a freshly-unlocked Credits button
         this.settingsScreen.hide = false;
       });
       this.engine.on("closeSettings", () => {
@@ -179,9 +214,21 @@ export default class Game {
       });
 
       this.engine.on("levelWin", () => {
-        this.menu.hide = false;
-        this.inventoryMenu.hide = false;
         this.engine.unregister("projectile");
+
+        // Beating the LAST level for the FIRST time rolls the victory crawl
+        // instead of dropping straight back to the menu. Every later clear just
+        // hands out the tier-7 energy cell (already done by rollForReward), so
+        // the menu reveal is the normal path.
+        var levels = this.engine.globals.levels;
+        var isFinalLevel = levels.selected >= levels.list.length;
+        if ( isFinalLevel && !this.creditsSeen ) {
+          this.creditsSeen = true;
+          this.creditsScreen.show();   // its onDone re-opens the menu when finished
+        } else {
+          this.menu.hide = false;
+          this.inventoryMenu.hide = false;
+        }
         this.engine.trigger("saveRequested");
       });
 
@@ -222,6 +269,52 @@ export default class Game {
         // this.engine.trigger("startGame");
       }
     });
+  }
+
+  // A small glowing key glyph (bow ring + shaft + teeth) in the unlock colour:
+  // blue = synth keys, green = equipment keys. Matches the energy-cell glow look.
+  generateKeyIcon(color) {
+    var S = Item.ICON_SIZE;
+    var cv = document.createElement("canvas");
+    cv.width = cv.height = S;
+    var ctx = cv.getContext("2d");
+    var tones = color === "blue"
+      ? { glow: "#1f5cf0", core: "#5b93ff", hot: "#d4e6ff" }
+      : { glow: "#10a64f", core: "#3fe389", hot: "#d8ffe9" };
+    var cx = S * 0.46;
+    ctx.save();
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.shadowColor = tones.glow;
+    ctx.shadowBlur = 7;
+    ctx.strokeStyle = tones.core;
+    // Bow (ring) near the top.
+    var ringY = S * 0.3, ringR = S * 0.16;
+    ctx.lineWidth = S * 0.1;
+    ctx.beginPath();
+    ctx.arc(cx, ringY, ringR, 0, Math.PI * 2);
+    ctx.stroke();
+    // Shaft down from the ring.
+    ctx.beginPath();
+    ctx.moveTo(cx, ringY + ringR);
+    ctx.lineTo(cx, S * 0.85);
+    ctx.stroke();
+    // Two teeth on the right of the lower shaft.
+    ctx.lineWidth = S * 0.085;
+    [0.66, 0.78].forEach(fy => {
+      ctx.beginPath();
+      ctx.moveTo(cx, S * fy);
+      ctx.lineTo(cx + S * 0.17, S * fy);
+      ctx.stroke();
+    });
+    ctx.shadowBlur = 0;
+    // Hot highlight inside the bow.
+    ctx.fillStyle = tones.hot;
+    ctx.beginPath();
+    ctx.arc(cx - ringR * 0.35, ringY - ringR * 0.35, S * 0.04, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+    return cv;
   }
 
   generateCircleImage(radius, color = "white") {
@@ -436,8 +529,15 @@ export default class Game {
       machines: this.inventory.machines,
       // One-time starter-hourglass bonus already consumed?
       firstHourglassBonusUsed: this.inventory.firstHourglassBonusUsed,
+      // Slot-unlock progression: which slots are still locked + which levels have
+      // already handed out their one-time key.
+      locks: { ...this.inventory.locks },
+      keysAwarded: this.engine.globals.levels.keysAwarded,
       // Which level the player last had selected (1-based) — reselect on reload.
       selectedLevel: this.engine.globals.levels.selected,
+      // Victory crawl is a one-time thing — once seen, later final-level clears
+      // skip straight to the reward.
+      creditsSeen: !!this.creditsSeen,
     };
   }
 
@@ -468,8 +568,19 @@ export default class Game {
     if ( typeof saved.firstHourglassBonusUsed === "boolean" ) {
       this.inventory.firstHourglassBonusUsed = saved.firstHourglassBonusUsed;
     }
+    if ( saved.locks ) {
+      for ( var lk in this.inventory.locks ) {
+        if ( typeof saved.locks[lk] === "boolean" ) this.inventory.locks[lk] = saved.locks[lk];
+      }
+    }
+    if ( saved.keysAwarded && typeof saved.keysAwarded === "object" ) {
+      this.engine.globals.levels.keysAwarded = saved.keysAwarded;
+    }
     if ( typeof saved.selectedLevel === "number" ) {
       this.engine.globals.levels.selected = saved.selectedLevel;
+    }
+    if ( typeof saved.creditsSeen === "boolean" ) {
+      this.creditsSeen = saved.creditsSeen;
     }
     if ( saved.equipment ) {
       ["primary", "effect", "left", "leftEffect", "right", "rightEffect"].forEach(slot => {
@@ -495,10 +606,12 @@ export default class Game {
     // reload, no slide. From there you can Close into a clean game with no items,
     // or hit a Cheat button (which closes the modal + slides into the inventory).
     if ( this.engine.dev ) {
-      this.inventory.reset();
+      this.inventory.reset();     // wipes items + re-locks every slot
       stats.power.lvl = stats.power.val = 1;
       stats.speed.lvl = stats.speed.val = 1;
       this.engine.globals.levels.selected = 1;
+      this.engine.globals.levels.keysAwarded = {};   // keys drop again from scratch
+      this.creditsSeen = false;   // let the victory crawl play again after a wipe
       this.engine.trigger("saveRequested");
       return;
     }

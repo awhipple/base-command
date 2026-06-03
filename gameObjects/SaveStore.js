@@ -18,7 +18,10 @@ const KEY = "base-command:save";
 // v11: colour-locked fuel; exact integer sub-fuel accounting (machines store `fuel`
 //      + `burstLeft`/`burstRate`, not `progress`/`boostFrames`); one-time first-
 //      hourglass double bonus (`firstHourglassBonusUsed`).
-const VERSION = 11;
+// v12: unlockable slots — synth machines + effect/helper slots start LOCKED
+//      (`inventory.locks`); blue/green KEY items (one-time level rewards) open
+//      them; per-level key-awarded flags (`levels.keysAwarded`).
+const VERSION = 12;
 
 export function load() {
   try {

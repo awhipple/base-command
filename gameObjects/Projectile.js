@@ -13,6 +13,7 @@ export default class Projectile extends GameObject {
   // toward a target; aim further off than this and the beam arcs but misses.
   static LASER_RANGE = 1000;
   static LASER_MAX_ARC = Math.PI / 4;
+  static FADE_TIME = 0.3;   // seconds a spent homing shot takes to fade out
 
   constructor(engine, x, y, dir, damage = 1, speed = 60, options = {}) {
     super(engine, {
@@ -250,7 +251,25 @@ export default class Projectile extends GameObject {
       }
     }
 
+    // Homing shots curve back onto the screen and would otherwise live forever,
+    // sniping anything that appears. Cap their travel: after ~2 screen-heights
+    // with no hit, fade out and vanish. They keep homing until then; once fading
+    // they just drift.
     if ( this.homing ) {
+      this.traveled = (this.traveled ?? 0) + Math.hypot(this.xv, this.yv);
+      if ( !this.fading && this.traveled > 2 * this.engine.window.height ) {
+        this.fading = true;
+      }
+    }
+    if ( this.fading ) {
+      this.fadeT = (this.fadeT ?? 0) + 1/60;
+      if ( this.fadeT >= Projectile.FADE_TIME ) {
+        this.engine.unregister(this);
+        return;
+      }
+    }
+
+    if ( this.homing && !this.fading ) {
       this.recomputeTarget--;
       if ( this.recomputeTarget === 0 || !this.target ) {
         this.recomputeTarget = 10;
@@ -309,12 +328,14 @@ export default class Projectile extends GameObject {
       this.sprite.x = this.x;
       this.sprite.y = this.y;
     }
+    // Spent homing shots fade out over FADE_TIME before vanishing.
+    var fade = this.fading ? Math.max(0, 1 - (this.fadeT ?? 0) / Projectile.FADE_TIME) : 1;
     if ( this.img ) {
       // Base draw size: stinger ≈ rect (20px), ball ≈ rect grown by 15/side (50px);
       // tier scales it (and the alpha) around the projectile centre.
       var base = this.scaleDown ? this.rect.w : this.rect.w + 30;
       var size = base * this.drawScale;
-      this.img.draw(ctx, new BoundingRect(this.x - size / 2, this.y - size / 2, size, size), { alpha: this.drawAlpha });
+      this.img.draw(ctx, new BoundingRect(this.x - size / 2, this.y - size / 2, size, size), { alpha: this.drawAlpha * fade });
     }
 
     // Ball weapons: a crisp, bright core on top of the soft body so the head
@@ -323,7 +344,7 @@ export default class Projectile extends GameObject {
     if ( !this.laser && !this.scaleDown ) {
       var rgb = Projectile.TRAIL[this.color] ?? Projectile.TRAIL.white;
       var coreR = (this.rect.w + 30) * this.drawScale * 0.33;
-      var a = this.drawAlpha;
+      var a = this.drawAlpha * fade;
       var grad = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, coreR);
       grad.addColorStop(0,    "rgba(255,255,255," + (0.95 * a) + ")");
       grad.addColorStop(0.45, "rgba(" + rgb.r + "," + rgb.g + "," + rgb.b + "," + (0.95 * a) + ")");
