@@ -38,7 +38,9 @@ export default class Reward extends GameObject {
       this.x += this.xv;
     }
 
-    if ( this.time <= 0 ) {
+    // Remove only once it's slid FULLY off the right edge (toward the inventory
+    // tab) — never pop while still on-screen. x keeps accelerating, so this fires.
+    if ( this.originX > this.engine.window.width ) {
       this.engine.unregister(this);
     }
   }

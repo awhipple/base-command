@@ -12,7 +12,7 @@ import Inventory from "./gameObjects/Inventory.js";
 import Cursor from "./gameObjects/Cursor.js";
 import Reward from "./gameObjects/Reward.js";
 import Circle from "./engine/gfx/shapes/Circle.js";
-import Item from "./gameObjects/Item.js";
+import Item, { ENERGY_TIER_COLORS, HOURGLASS_MAX_TIER } from "./gameObjects/Item.js";
 import ToolTip from "./gameObjects/ui/ToolTip.js";
 import Lightning from "./engine/gfx/effects/Lightning.js";
 import Image from "./engine/gfx/Image.js";
@@ -36,7 +36,7 @@ export default class Game {
 
   start() {
     this.engine.images.preload([
-      "base", "dragon-green",
+      "dragon-green",
       "white-gems", "red-gems", "blue-gems", "yellow-gems", "purple-gems"
     ]);
     this.engine.sounds.preload([
@@ -51,10 +51,11 @@ export default class Game {
       this.engine.images.save(this.generateRapidIcon(color), color + "-rapid-icon");
     });
 
-    // Hourglass icons (one per tier), frame tinted to read the tier at a glance.
-    ["#c98a3a", "#cfd6df", "#f0c060", "#7dd3fc", "#e879f9", "#ff6b6b", "#7ee787"].forEach((col, i) => {
-      this.engine.images.save(this.generateHourglassIcon(col), "hourglass-" + (i + 1));
-    });
+    // Fuel "energy cell" icons (one per tier). Each tier climbs the rarity/heat
+    // ramp + grows + gains lit charge segments, so bigger = visibly stronger.
+    for ( var t = 1; t <= HOURGLASS_MAX_TIER; t++ ) {
+      this.engine.images.save(this.generateEnergyCellIcon(t, HOURGLASS_MAX_TIER), "hourglass-" + t);
+    }
 
     [
       [whiteCircle, "white-part-circle"],
@@ -83,11 +84,6 @@ export default class Game {
       }
 
       this.engine.images.save(this.generateColoredImage(this.engine.images.get("dragon-green")), "dragon-flash");
-
-      // One colour-tinted base sprite shared by BOTH helper turrets, so they
-      // read as helpers (distinct from the main base) but identical to each
-      // other. Used in-game + on the inventory screen.
-      this.engine.images.save(this.generateTintedImage(this.engine.images.get("base"), "#35c9d6"), "base-helper");
 
       // Each gem sheet is 10 tiles (50px) = 10 tiers, ascending in complexity.
       // Save every tile as "<color>-gem-<tier>" (tier 1..10) for the tier system.
@@ -133,18 +129,19 @@ export default class Game {
 
       this.engine.register(this.engine.globals.toolTip = new ToolTip(this.engine));
 
+      // Close settings + slide the inventory open so a cheat's spoils are visible.
+      var revealInventory = () => {
+        this.settingsScreen.hide = true;
+        this.menu.hide = false;
+        this.inventoryMenu.hide = false;
+        this.invHide = false;
+        this.engine.trigger("openInventory");
+      };
       this.settingsScreen = new SettingsScreen(this.engine, {
         onReset: () => this._resetSave(),
         dev: this.engine.dev,
-        onCheat: () => {
-          this.inventory.cheat();
-          // Close settings and slide the inventory open so you see the new gems.
-          this.settingsScreen.hide = true;
-          this.menu.hide = false;
-          this.inventoryMenu.hide = false;
-          this.invHide = false;
-          this.engine.trigger("openInventory");
-        },
+        onCheatEnergy: () => { this.inventory.cheat();     revealInventory(); },
+        onCheatGems:   () => { this.inventory.cheatGems(); revealInventory(); },
       });
       this.engine.register(this.settingsScreen);
 
@@ -284,29 +281,96 @@ export default class Game {
     return img;
   }
 
-  // A little hourglass: tinted frame/caps + sand (top + settled bottom + stream).
-  generateHourglassIcon(frame = "#f0c060") {
+  // A sci-fi "energy cell" of fuel — a glowing plasma core inside a containment
+  // ring with charge segments. Higher tier = bigger + hotter colour
+  // (ENERGY_TIER_COLORS) + more lit segments + more crackle, so a stronger cell
+  // reads instantly. Replaces the old hourglass art (fuel is no longer a speed-up).
+  generateEnergyCellIcon(tier = 1, maxTier = 7) {
     var c = document.createElement("canvas");
     c.width = c.height = 100;
     var ctx = c.getContext("2d");
 
-    // Sand fills first (so the frame strokes over it).
-    ctx.fillStyle = "#ffd86b";
-    ctx.beginPath(); ctx.moveTo(34, 22); ctx.lineTo(66, 22); ctx.lineTo(50, 46); ctx.closePath(); ctx.fill(); // top pile
-    ctx.beginPath(); ctx.moveTo(36, 78); ctx.lineTo(64, 78); ctx.lineTo(50, 60); ctx.closePath(); ctx.fill(); // bottom pile
-    ctx.fillRect(48, 46, 4, 14); // falling stream
+    var pal = ENERGY_TIER_COLORS[tier - 1] || ENERGY_TIER_COLORS[0];
+    var f = maxTier > 1 ? (tier - 1) / (maxTier - 1) : 0;   // 0..1 up the ramp
+    var cx = 50, cy = 50;
+    var coreR = 13 + f * 19;          // T1 small droplet → T7 big orb
+    var ringR = coreR + 10;
 
-    // Glass: two triangles meeting at the neck.
-    ctx.strokeStyle = frame;
-    ctx.lineWidth = 4;
-    ctx.lineJoin = "round";
-    ctx.beginPath(); ctx.moveTo(28, 20); ctx.lineTo(72, 20); ctx.lineTo(50, 50); ctx.closePath();
-    ctx.moveTo(28, 80); ctx.lineTo(72, 80); ctx.lineTo(50, 50); ctx.closePath();
-    ctx.stroke();
+    // "#rrggbb" → "rgba(r,g,b,a)" so we can layer translucent glows.
+    var rgba = (hex, a) => {
+      var h = hex.replace("#", "");
+      if ( h.length === 3 ) h = h.split("").map(x => x + x).join("");
+      var n = parseInt(h, 16);
+      return "rgba(" + ((n >> 16) & 255) + "," + ((n >> 8) & 255) + "," + (n & 255) + "," + a + ")";
+    };
 
-    // Top + bottom caps.
-    ctx.lineWidth = 7; ctx.lineCap = "round";
-    ctx.beginPath(); ctx.moveTo(24, 18); ctx.lineTo(76, 18); ctx.moveTo(24, 82); ctx.lineTo(76, 82); ctx.stroke();
+    // 1) Outer bloom — the cell emits light, brighter the higher the tier.
+    var bloom = ctx.createRadialGradient(cx, cy, coreR * 0.3, cx, cy, ringR + 14);
+    bloom.addColorStop(0, rgba(pal.core, 0.45 + 0.3 * f));
+    bloom.addColorStop(0.55, rgba(pal.glow, 0.22));
+    bloom.addColorStop(1, rgba(pal.glow, 0));
+    ctx.fillStyle = bloom;
+    ctx.fillRect(0, 0, 100, 100);
+
+    // 2) Containment ring + charge segments: maxTier slots, the first `tier` lit.
+    //    A radial fuel gauge — more lit segments = more fuel.
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "#2b3550";
+    ctx.beginPath(); ctx.arc(cx, cy, ringR, 0, Math.PI * 2); ctx.stroke();
+    ctx.lineCap = "round";
+    for ( var i = 0; i < maxTier; i++ ) {
+      var ang = -Math.PI / 2 + i * (Math.PI * 2 / maxTier);
+      var lit = i < tier;
+      var ax = Math.cos(ang), ay = Math.sin(ang);
+      ctx.lineWidth = lit ? 4 : 3;
+      ctx.strokeStyle = lit ? pal.core : "#39435c";
+      if ( lit ) { ctx.shadowColor = pal.core; ctx.shadowBlur = 6; }
+      ctx.beginPath();
+      ctx.moveTo(cx + ax * (ringR - 3), cy + ay * (ringR - 3));
+      ctx.lineTo(cx + ax * (ringR + 5), cy + ay * (ringR + 5));
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+    }
+
+    // 3) Plasma core — hot centre → core → glow edge.
+    var core = ctx.createRadialGradient(cx - coreR * 0.3, cy - coreR * 0.35, coreR * 0.1, cx, cy, coreR);
+    core.addColorStop(0, pal.hot);
+    core.addColorStop(0.5, pal.core);
+    core.addColorStop(1, pal.glow);
+    ctx.fillStyle = core;
+    ctx.beginPath(); ctx.arc(cx, cy, coreR, 0, Math.PI * 2); ctx.fill();
+    ctx.lineWidth = 2; ctx.strokeStyle = rgba(pal.hot, 0.85);
+    ctx.beginPath(); ctx.arc(cx, cy, coreR, 0, Math.PI * 2); ctx.stroke();
+
+    // 4) Contained energy filaments — bright arcs across the core, more per tier.
+    var arcs = 1 + Math.round(f * 3);
+    ctx.lineWidth = 1.4;
+    ctx.strokeStyle = rgba(pal.hot, 0.5);
+    for ( var k = 0; k < arcs; k++ ) {
+      var a0 = k * 1.7;
+      ctx.beginPath();
+      ctx.arc(cx + Math.cos(a0) * coreR * 0.25, cy + Math.sin(a0) * coreR * 0.25,
+              coreR * 0.7, a0, a0 + Math.PI * 1.1);
+      ctx.stroke();
+    }
+
+    // glossy specular highlight (top-left)
+    ctx.fillStyle = rgba("#ffffff", 0.8);
+    ctx.beginPath();
+    ctx.ellipse(cx - coreR * 0.32, cy - coreR * 0.4, coreR * 0.26, coreR * 0.15, -0.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 5) Orbiting charge sparks — a few bright motes at higher tiers.
+    var sparks = Math.max(0, tier - 2);
+    for ( var s = 0; s < sparks; s++ ) {
+      var sa = s * 2.39996;                          // golden angle → scattered
+      var sr = coreR + 3 + (s % 2) * 3;
+      var sx = cx + Math.cos(sa) * sr, sy = cy + Math.sin(sa) * sr;
+      ctx.fillStyle = rgba(pal.hot, 0.95);
+      ctx.shadowColor = pal.core; ctx.shadowBlur = 5;
+      ctx.beginPath(); ctx.arc(sx, sy, 2, 0, Math.PI * 2); ctx.fill();
+      ctx.shadowBlur = 0;
+    }
 
     return c;
   }
@@ -372,6 +436,8 @@ export default class Game {
       machines: this.inventory.machines,
       // One-time starter-hourglass bonus already consumed?
       firstHourglassBonusUsed: this.inventory.firstHourglassBonusUsed,
+      // Which level the player last had selected (1-based) — reselect on reload.
+      selectedLevel: this.engine.globals.levels.selected,
     };
   }
 
@@ -402,6 +468,9 @@ export default class Game {
     if ( typeof saved.firstHourglassBonusUsed === "boolean" ) {
       this.inventory.firstHourglassBonusUsed = saved.firstHourglassBonusUsed;
     }
+    if ( typeof saved.selectedLevel === "number" ) {
+      this.engine.globals.levels.selected = saved.selectedLevel;
+    }
     if ( saved.equipment ) {
       ["primary", "effect", "left", "leftEffect", "right", "rightEffect"].forEach(slot => {
         var name = saved.equipment[slot];
@@ -422,6 +491,18 @@ export default class Game {
 
   _resetSave() {
     SaveStore.clear();
+    // Dev: wipe to a fresh state IN PLACE and STAY in the Settings modal — no
+    // reload, no slide. From there you can Close into a clean game with no items,
+    // or hit a Cheat button (which closes the modal + slides into the inventory).
+    if ( this.engine.dev ) {
+      this.inventory.reset();
+      stats.power.lvl = stats.power.val = 1;
+      stats.speed.lvl = stats.speed.val = 1;
+      this.engine.globals.levels.selected = 1;
+      this.engine.trigger("saveRequested");
+      return;
+    }
+    // Prod: reload to a clean title screen (no cheat buttons exist there).
     if ( this._beforeUnload ) {
       window.removeEventListener("beforeunload", this._beforeUnload);
       this._beforeUnload = null;

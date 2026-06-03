@@ -4,7 +4,8 @@ import { BoundingRect } from "../../engine/GameMath.js";
 import { UIComponent } from "../../engine/gfx/ui/window/UIComponent.js";
 import Item, { GEM_MAX_TIER, BURST_SECONDS } from "../Item.js";
 import CrackleBed from "../../engine/CrackleBed.js";
-import Sprite from "../../engine/gfx/Sprite.js";
+import { drawTurret, weaponTypeOf, effectColorOf } from "../TurretSprite.js";
+import { roundedRectPath } from "./canvas.js";
 import EffectRect from "../effects/EffectRect.js";
 import FlyingGem from "../effects/FlyingGem.js";
 import Banner from "./Banner.js";
@@ -19,34 +20,48 @@ import Banner from "./Banner.js";
 // GEN_SECONDS = fuel per output gem. Higher OUTPUT level costs proportionally
 // more (bigger gem, ~flat rate). All tunable, pending the design pass.
 const GEN_SECONDS = 60;         // fuel per gem
-const IDLE_FUEL_PER_TIER = 2;   // a loaded gem idles at tier × this fuel/sec
+const IDLE_FUEL_PER_TIER = 0.5;   // a loaded gem idles at tier × this fuel/sec (T1=0.5/s, T2=1/s…)
+// NOTE: keep this a power-of-two fraction (0.25, 0.5, …) so tier × it stays an
+// exactly-representable float and the integer sub-fuel accounting never drifts.
 
 // EXACT accounting. Fuel is tracked in integer "sub-fuel" units (1 fuel =
 // FUEL_SCALE sub-fuel) so per-frame accumulation never drifts: at 60fps the
-// per-frame idle drip is `idleFuel/sec` sub-fuel and a burst drains `burstRate`
-// sub-fuel/frame — both whole numbers given integer GEN_SECONDS /
+// per-frame idle drip is `idleFuel/sec` sub-fuel and a burning hourglass drains
+// its `rate` sub-fuel/frame — both whole numbers given integer GEN_SECONDS /
 // IDLE_FUEL_PER_TIER / HOURGLASS_FUEL / BURST_SECONDS. A gem costs an integer
 // number of sub-fuel, so `fuel >= cost` is exact: N hourglasses convert to a
 // deterministic number of gems with no floating-point fuzz at the boundary.
 const FUEL_SCALE = 60;          // sub-fuel per fuel (== fps, so per-frame drips are whole)
 
-// Machine leveling: each machine produces gems at its own `level` (output tier).
-// Producing LEVEL_GEMS gems at the current level fills the yellow XP bar and
-// bumps the machine to the next tier — it then makes a bigger gem but takes
-// twice as long per level (so output rate stays ~flat; you just start higher).
-// 16 = a power of two so a level's worth of gems merges all the way up cleanly
-// (16 → 8 → 4 → 2 → 1) with NO awkward leftover tier.
-const LEVEL_GEMS = 16;
+// Machine leveling: each machine produces levelGems(level) gems at its own `level`
+// (output tier), filling the yellow XP bar, then bumps to the next tier — a bigger
+// gem but ~twice as long per level (output rate stays ~flat; you just start higher).
+//
+// Why 16 (a power of two): a single level's batch then merges all the way up
+// cleanly (16 → 8 → 4 → 2 → 1) to ONE gem four tiers higher. But across levels the
+// merged-up batches collide — level L's 16 land at tier L+4, so levels 1..4 leave
+// lone T5/T6/T7/T8 gems that never pair up (the "straggler leak"). LEVEL 5 makes 17
+// instead: that one extra T5 pairs with level 1's leftover T5 and cascades up
+// (T5→T6→T7→T8→T9→T10), zeroing the leak. It brings the running total to an exact
+// power of two (512 = one T10) at level 5, after which every later 16-batch just
+// doubles it, so the whole lifetime output collapses to pure T10 with NO low-tier
+// leftovers. (Verified by merge sim; a 17th at any OTHER level re-breaks it.)
+const LEVEL_GEMS = { 5: 17 };          // per-level overrides; default below
+const LEVEL_GEMS_DEFAULT = 16;
+function levelGems(level) { return LEVEL_GEMS[level] ?? LEVEL_GEMS_DEFAULT; }
 
 // Helper turrets fire at half damage AND half rate (mirrors Helper.FIRE_MULT /
 // DAMAGE_MULT) and ignore the effect gem — used for the helper hover readout.
 const HELPER_MULT = 0.5;
 
-// White merge-flash duration (frames) for synth + equip slots, matched to the
-// inventory grid's pulse so all merges feel the same. flashAlpha() = hold bright,
-// then fade over the last ~40%.
-const SLOT_FLASH_FRAMES = 25;
-function flashAlpha(f) { return Math.min(1, (f / SLOT_FLASH_FRAMES) * 2.5) * 0.85; }
+// White merge-flash duration (frames) shared by ALL three drop regions (inventory
+// grid, synth slots, equip slots) so every merge feels identical. ~0.8s at 60fps.
+// flashAlpha() snaps to FULLY OPAQUE (peak 1.0) and holds for the first ~60% so the
+// gem is completely hidden — the "magic merge" — then fades over the last ~40% to
+// reveal the upgraded gem. (Peaking below 1.0 lets the gem show through, which
+// reads as a computery snap-swap instead of a merge.)
+const SLOT_FLASH_FRAMES = 50;
+function flashAlpha(f) { return Math.min(1, (f / SLOT_FLASH_FRAMES) * 2.5); }
 
 // tier 1 keeps the bare colour name; tiers 2+ append the number (matches Item.js).
 function gemName(base, tier) { return tier === 1 ? base : base + tier; }
@@ -102,9 +117,11 @@ export default class InventoryMenu extends UIWindow {
       z: 101,
     });
 
-    this.invText = new Text("Inventory ↑", 0, 0, { fontColor: "white", fontSize: 22 }).asImage(150, 30).rotate("up");
-    this.closeText = new Text("↑ Close", 0, 0, { fontColor: "white", fontSize: 22 }).asImage(150, 30).rotate("down");
-    this.invOpenRect = new BoundingRect(this.originX-48, 310, 96, 170);
+    // The slide-out tab handle straddles the panel's left edge (originX): the
+    // "SYNTH" label shows on the protruding half when the panel is closed,
+    // "CLOSE" (= back to the title screen) when it's open. invOpenClick is the
+    // hit region (its x tracks the panel in update()); the look is drawn by
+    // _drawTab() in the title screen's button language.
     this.invOpenClick = new BoundingRect(this.engine.window.width-48, 310, 96, 170);
 
     this.engine.onMouseMove(event => {
@@ -129,6 +146,59 @@ export default class InventoryMenu extends UIWindow {
     // slot (only while the panel is actually visible; during levels it's hidden,
     // so gems just appear). See _spawnGemFlyer.
     this.engine.on("gemSynthed", (item, machineGem) => this._spawnGemFlyer(item, machineGem));
+
+    // The three drop regions, cached once (built by super()'s _generateComponents).
+    this._items = this.components.find(c => c instanceof Items);
+    this._synth = this.components.find(c => c instanceof Synthesis);
+    this._equip = this.components.find(c => c instanceof Equipment);
+
+    // SINGLE drop authority. The Cursor fires "stopDragItem" once per release with
+    // whatever gem is on the cursor; we resolve it here and nowhere else. (The old
+    // design had three independent handlers racing on the shared dragItem, which
+    // let one drop be consumed twice — gems lost / merged into the wrong slot.)
+    this.engine.on("stopDragItem", (item) => this._resolveDrop(item));
+  }
+
+  // Resolve a finished drag exactly once. Find the ONE slot under the cursor (by
+  // region, since the regions don't overlap) and hand off to inventory.resolveDrop,
+  // then play the matching feedback. Anything off a valid target snaps back.
+  _resolveDrop(drag) {
+    if ( !drag ) return;
+    var inv = this.engine.globals.inventory;
+    var src = this.engine.globals.dragSource;
+
+    // An hourglass (boost) dropped on a synth MACHINE is BURNED for a fuel burst —
+    // a special action, not a slot move. Checked first so a boost over the synth
+    // always burns (boosts can still merge/rearrange when dropped on the grid).
+    if ( drag.type === "boost" && this._synth && this._synth.hoverMachine ) {
+      this._synth.burn(drag);
+      return;
+    }
+
+    // Otherwise it's a slot move. Pick the hovered target by region priority.
+    var target = (this._equip && this._equip.dropRef())
+              || (this._synth && this._synth.dropRef())
+              || (this._items && this._items.dropRef());
+    if ( !target ) return;                       // dropped on empty space → snap back
+
+    var res = inv.resolveDrop(drag, src, target);
+    if ( res.action === "none" ) return;         // rejected → nothing changed
+
+    if ( res.action === "merge" ) {
+      // Poof off the cursor + a white flash on the slot that received the merge.
+      this.engine.register(new EffectRect(this.engine, this.engine.globals.cursor.rect, {
+        color: drag.borderColor, icon: drag.icon, grow: -0.6, fade: 0.06,
+      }));
+      if ( target.kind === "equip" ) this._equip.flashSlot(target.slot);
+      else if ( target.kind === "synth" ) this._synth.flashSlot(target.slot);
+      else if ( target.kind === "inv" ) this._items.flashSlot(target.index);
+      this.engine.trigger("itemsMerged");
+    } else if ( target.kind === "equip" ) {
+      this.engine.trigger("itemEquipped");   // move/swap into an equip slot
+    }
+
+    this.engine.trigger("openInventory");        // rebuild the grid's icon rects
+    this.engine.trigger("saveRequested");
   }
 
   update() {
@@ -142,10 +212,87 @@ export default class InventoryMenu extends UIWindow {
 
   draw(ctx) {
     super.draw(ctx);
-    this.invOpenRect.x = this.originX-48;
-    this.invOpenRect.draw(ctx, "white", "black");
-    this.invText.draw(ctx, this.originX-40, 320);
-    this.closeText.draw(ctx, this.originX+7, 344);
+    this._drawTab(ctx);
+  }
+
+  // The slide-out tab handle, in the title screen's button language: rounded,
+  // navy gradient, green accent + glow on hover. It straddles the panel's left
+  // edge (originX), so the LEFT half ("SYNTH") shows when the panel is closed
+  // (off to the right) and the RIGHT half ("CLOSE" — back to the title screen)
+  // shows when it's open. The two labels cross-fade as the panel slides.
+  _drawTab(ctx) {
+    var W = this.engine.window.width;
+    var x = this.originX - 48, y = 310, w = 96, h = 170;
+    var hover = this.hoverInv;
+    var accent = "#7ee787";
+    // 1 when fully closed (panel parked right) → 0 when fully open; drives the
+    // INVENTORY↔CLOSE label cross-fade so only the on-screen half reads.
+    var t = Math.max(0, Math.min(1, this.originX / W));
+
+    ctx.save();
+
+    // Body — rounded handle, vertical navy gradient, accent border (+glow hover).
+    roundedRectPath(ctx, x, y, w, h, 18);
+    var bg = ctx.createLinearGradient(x, y, x, y + h);
+    if ( hover ) { bg.addColorStop(0, "#1c2a44"); bg.addColorStop(1, "#0a1226"); }
+    else         { bg.addColorStop(0, "#121a2c"); bg.addColorStop(1, "#070b17"); }
+    ctx.fillStyle = bg;
+    ctx.fill();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = hover ? accent : "#3a4a6a";
+    if ( hover ) { ctx.shadowColor = accent; ctx.shadowBlur = 14; }
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+
+    ctx.font = "15px Lucida Console, Menlo, monospace";   // lighter than bold — the tab read too heavy
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    var cy = y + h / 2;
+
+    // LEFT half: "SYNTH" (visible closed). Left chevrons hint "pull open".
+    if ( t > 0.02 ) {
+      ctx.globalAlpha = t;
+      var cInv = hover ? "#eaffea" : "#cfd6e2";
+      this._tabChevron(ctx, x + 23, y + 26, "left", cInv);
+      this._vTabText(ctx, "SYNTH", x + 23, cy, cInv);
+      this._tabChevron(ctx, x + 23, y + h - 26, "left", cInv);
+    }
+    // RIGHT half: "CLOSE" (visible open). Right chevrons hint "push to close".
+    if ( t < 0.98 ) {
+      ctx.globalAlpha = 1 - t;
+      var cCls = hover ? "#eaffea" : "#9aa7c2";
+      this._tabChevron(ctx, x + 73, y + 26, "right", cCls);
+      this._vTabText(ctx, "CLOSE", x + 73, cy, cCls);
+      this._tabChevron(ctx, x + 73, y + h - 26, "right", cCls);
+    }
+
+    ctx.restore();
+  }
+
+  // Vertical label (reads bottom-to-top) centred at (cx, cy).
+  _vTabText(ctx, text, cx, cy, color) {
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(-Math.PI / 2);
+    ctx.fillStyle = color;
+    ctx.fillText(text, 0, 0);
+    ctx.restore();
+  }
+
+  // A small rounded chevron pointing "left"/"right" (the panel slide direction).
+  _tabChevron(ctx, cx, cy, dir, color, size = 5) {
+    var s = dir === "left" ? 1 : -1;
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2.5;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.beginPath();
+    ctx.moveTo(cx + s * size / 2, cy - size);
+    ctx.lineTo(cx - s * size / 2, cy);
+    ctx.lineTo(cx + s * size / 2, cy + size);
+    ctx.stroke();
+    ctx.restore();
   }
 
   // Map a point that is LOCAL to one of `win`'s stacked components into `win`'s
@@ -169,35 +316,49 @@ export default class InventoryMenu extends UIWindow {
   _spawnGemFlyer(item, machineGem) {
     if ( !item || this.hide || this.originX >= this.engine.window.width - 1 ) return;
 
-    var synth = this.components.find(c => c instanceof Synthesis);
-    var items = this.components.find(c => c instanceof Items);
+    var synth = this._synth, items = this._items;
     if ( !synth || !items ) return;
     var machine = synth.machines.find(x => x.gem === machineGem);
     if ( !machine ) return;
 
-    // Destination slot: the inventory grid is a nested window (items.menu) of
-    // ItemRow components (8 cols each). index → (row, col).
     var index = this.engine.globals.inventory.items.indexOf(item);
+    if ( index < 0 ) return;
     var row = Math.floor(index / 8), col = index % 8;
-    var rowComp = items.menu.components[row];
-    if ( index < 0 || !rowComp ) return;   // off the visible grid → just appear
 
     // START: machine output-icon centre (Synthesis-local) → screen.
-    var r = machine.body;
+    var r = machine.body, step = items.iconSize + items.iconPadding, sz = items.iconSize;
     var start = this._mapFromComponent(this, synth, r.x + r.w / 2, r.y + r.h / 2);
 
-    // END: slot centre (ItemRow-local) → items.menu space → Items-local → screen.
-    var step = items.iconSize + items.iconPadding, sz = items.iconSize;
-    var inMenu = this._mapFromComponent(items.menu, rowComp, col * step + sz / 2, sz / 2);
-    var end = this._mapFromComponent(this, items, inMenu.x, inMenu.y);
+    // Is that slot's row currently scrolled into the visible grid window? The grid
+    // shows `iconRows` rows starting at the scrolled-to row.
+    var topRow = Math.round((items.menu.scroll || 0) / step);
+    var onScreen = row >= topRow && row < topRow + items.iconRows;
 
-    // Hide the gem in its slot until the flyer lands (save-safe: it's already in
-    // inventory, this flag is transient + never serialized).
-    item._inFlight = true;
-    this.engine.register(new FlyingGem(this.engine, item.icon, start, end, {
-      color: item.color,
-      onLand: () => { item._inFlight = false; },
-    }));
+    if ( onScreen ) {
+      // Land it crisply in its slot. END: slot centre (ItemRow-local) → items.menu
+      // → Items-local → screen. Hide the gem in its slot until the flyer lands
+      // (save-safe: it's already in inventory; the flag is transient + unserialized).
+      var rowComp = items.menu.components[row];
+      if ( !rowComp ) return;
+      var inMenu = this._mapFromComponent(items.menu, rowComp, col * step + sz / 2, sz / 2);
+      var end = this._mapFromComponent(this, items, inMenu.x, inMenu.y);
+      item._inFlight = true;
+      this.engine.register(new FlyingGem(this.engine, item.icon, start, end, {
+        color: item.color,
+        onLand: () => { item._inFlight = false; },
+      }));
+    } else {
+      // Destination is scrolled off-screen — there's no slot to land in, so fly a
+      // generic "whoosh" up to the top-centre of the visible grid and fade it out.
+      // The gem already lives in its (scrolled-away) slot; this is just the cue.
+      var gx = items.menu.rect.x + items.menuWidth / 2;
+      var gy = items.menu.rect.y + sz;     // ~one row below the grid's top edge
+      var end = this._mapFromComponent(this, items, gx, gy);
+      this.engine.register(new FlyingGem(this.engine, item.icon, start, end, {
+        color: item.color,
+        fadeOut: true,
+      }));
+    }
   }
 }
 
@@ -214,6 +375,8 @@ class Items extends UIComponent {
   initialize() {
     super.initialize();
 
+    this._flash = {};   // white merge-flash frames, keyed by absolute inventory index
+
     var itemIndexes = [];
     for ( var i = 0; i < this.maxRows; i++ ) {
       itemIndexes.push(i*this.iconColumns);
@@ -229,6 +392,7 @@ class Items extends UIComponent {
         iconPadding: this.iconPadding,
         itemCount: this.iconColumns,
         index: val,
+        owner: this,           // rows report the hovered slot up to here (hoverRef)
       }}),
       {
         bgColor: "#000",
@@ -241,8 +405,10 @@ class Items extends UIComponent {
     // (No discard/sell button — money is out of the game. A "recycle into an
     // hourglass" feature may live here later.) White catalysts come from the
     // white source machine, not a buy button.
-    this.sortRect = new BoundingRect(480, 130, 50, 28);
-    this.sortText = new Text('Sort', 487, 134, {
+    // Anchored to the component's bottom so it lines up with the grid's bottom
+    // edge (and won't drift if the visible row count changes).
+    this.sortRect = new BoundingRect(480, this.height - 32, 50, 28);
+    this.sortText = new Text('Sort', 487, this.height - 28, {
       fontSize: 15,
       fontColor: "#9aa7c2",
     });
@@ -258,11 +424,27 @@ class Items extends UIComponent {
     this.menu.maxScroll = Math.max(0, contentH - this.menu.rect.h + this.menu.outerPadding * 2);
     this.menu.scroll = Math.min(this.menu.scroll, this.menu.maxScroll);
     this.menu.update();
+
+    // Tick down merge flashes here (once/frame) so the fade is redraw-independent.
+    for ( var k in this._flash ) {
+      if ( this._flash[k] > 0 ) this._flash[k] -= 1;
+      else delete this._flash[k];
+    }
   }
+
+  // The inventory slot currently under the cursor (set by the hovered ItemRow on
+  // move, cleared here each move). null when the cursor isn't over the grid.
+  dropRef() { return this.hoverRef ?? null; }
+
+  // White merge-flash on an inventory slot (matches the synth/equip slot flash).
+  // Drawn by the owning ItemRow; ticked down in update() so it lasts the same time
+  // regardless of redraws.
+  flashSlot(index) { this._flash[index] = SLOT_FLASH_FRAMES; }
 
   onMouseMove(event) {
     this.engine.globals.toolTipItem = null;
     this.hoverSort = this.sortRect.contains(event.pos);
+    this.hoverRef = null;                 // cleared before rows run; the hovered row resets it
 
     event.relPos = event.pos;
     event.relPos.x -= this.menu.originX;
@@ -288,12 +470,6 @@ class Items extends UIComponent {
     event.relPos = event.pos;
     event.relPos.x -= this.menu.originX;
     this.menu.onMouseClick(event);
-  }
-
-  onMouseUp(event) {
-    event.relPos = event.pos;
-    event.relPos.x -= this.menu.originX;
-    this.menu.onMouseUp(event);
   }
 
   drawComponent() {
@@ -336,127 +512,88 @@ class ItemRow extends UIComponent {
   onMouseClick(event) {
     var c = this._colAt(event.pos);
     if ( c === -1 ) return;
-    var item = this.options.inventory.items[c + this.options.index];
+    var idx = c + this.options.index;
+    var item = this.options.inventory.items[idx];
     if ( item ) {
       this.engine.globals.dragItem = item;
-      this.engine.globals.dragSource = { kind: "inv" };
+      this.engine.globals.dragSource = { kind: "inv", index: idx };   // exact slot to vacate
     }
   }
 
   onMouseMove(event) {
     var drag = this.engine.globals.dragItem;
-    this.dropTarget = null; this.dropCol = null; this.moveIdx = null;
+    this.dropCol = null; this.moveIdx = null;
 
     var c = this._colAt(event.pos);
     if ( c === -1 ) { this.engine.trigger("unhoverItem"); return; }
 
     var idx = c + this.options.index;
     var target = this.options.inventory.items[idx];
-    // Gems have NO tooltip (learn their effects by equipping + reading the weapon
-    // badge). Catalysts / hourglasses keep theirs (fuel rate, burn duration).
-    this.engine.globals.toolTipItem = (target && target.type !== "gem") ? target : null;
+    // Every hovered item gets a tooltip. Gems show a COMPACT one (just name + tier
+    // — their weapon/effect stats stay hidden, learned via the equipped badge);
+    // hourglasses show their full fuel-rate / burn-duration tooltip. (ToolTip
+    // branches on item.type.)
+    this.engine.globals.toolTipItem = target ?? null;
 
+    // Report the hovered slot up to the grid so the drop coordinator can find it.
+    // (Items.onMouseMove cleared hoverRef before dispatching; only the row under
+    // the cursor sets it, so there's no clobbering between rows.)
     if ( drag ) {
-      if ( target && target !== drag ) {
-        this.dropTarget = target;   // merge candidate
-        this.dropCol = c;
-      } else if ( !target ) {
-        this.moveIdx = idx;         // empty slot -> rearrange here
-        this.dropCol = c;
-      }
+      this.options.owner.hoverRef = { kind: "inv", index: idx };
+      if ( !target ) { this.moveIdx = idx; this.dropCol = c; }   // empty → draw the move outline
     }
     if ( !target ) this.engine.trigger("unhoverItem");
   }
 
-  onMouseUp(event) {
-    var drag = this.engine.globals.dragItem;
-    var src = this.engine.globals.dragSource;
-    var inv = this.engine.globals.inventory;
-    if ( !drag ) return;
-    if ( this.dropTarget ) {
-      var newItem = inv.attemptMerge(drag, this.dropTarget);
-      if ( newItem ) {
-        // attemptMerge only nulls an inventory slot; clear an equip/synth source too.
-        inv.clearSource(drag, src);
-        if ( this.iconRects[this.dropCol] ) {
-          this.engine.register(new EffectRect(this.engine, this.engine.globals.cursor.rect, {
-            color: drag.borderColor,
-            icon: drag.icon,
-            grow: -0.6,
-            fade: 0.06,
-          }));
-          this.iconRects[this.dropCol].pulse("white", 0.25);
-          this.iconRects[this.dropCol].changeStateIn(0.75, {
-            icon: newItem.icon,
-            color: newItem.borderColor,
-          });
-        }
-      } else {
-        // Different (non-mergeable) gems -> SWAP: the dragged gem takes the
-        // target's inventory slot; the target moves to wherever the drag came from.
-        var targetIdx = inv.items.indexOf(this.dropTarget);
-        if ( targetIdx === -1 ) return;
-        if ( src && src.kind === "equip" ) {
-          inv.equipment[src.slot] = this.dropTarget;
-        } else if ( src && src.kind === "synth" ) {
-          // Synth slots are colour-locked: only the matching colour can swap in.
-          // Wrong colour -> reject the whole swap (both gems snap back).
-          if ( this.dropTarget.color + "Gem" !== src.slot ) return;
-          inv.machines[src.slot].loaded = { name: this.dropTarget.name, tier: this.dropTarget.tier };
-        } else {
-          var dragIdx = inv.items.indexOf(drag);
-          if ( dragIdx === -1 ) return;
-          inv.items[dragIdx] = this.dropTarget;
-        }
-        inv.items[targetIdx] = drag;
-        inv.engine.trigger("openInventory");
-        inv.engine.trigger("saveRequested");
-      }
-    } else if ( this.moveIdx != null ) {
-      // Drop into an empty inventory slot: rearrange (inv) or unequip (equip).
-      inv.dropToInventory(drag, this.moveIdx, src);
-    }
-  }
-
   update() {
-    this.iconRects.forEach(rect => rect.update());
+    this.iconRects.forEach(rect => rect?.update());
   }
 
   drawComponent() {
-    for ( var i = 0; i < this.options.itemCount && i + this.options.index < this.options.inventory.items.length; i++ ) {
+    var dragItem = this.engine.globals.dragItem;
+    var size = this.options.iconSize, step = size + this.options.iconPadding;
+
+    // Data-driven: each column's icon is rebuilt from the live items array, and a
+    // slot with no item drops its cached rect. So a slot can never keep showing a
+    // gem that has moved/merged away (the old "vanishing / wrong icon" bug), and
+    // a freed slot can never paint a ghost.
+    for ( var i = 0; i < this.options.itemCount; i++ ) {
       var item = this.options.inventory.items[i + this.options.index];
 
-      // Hide a gem that's still flying from its synth into this slot — it's
-      // revealed when the flyer lands (see FlyingGem / _spawnGemFlyer).
-      if ( item && !item._inFlight ) {
-        var rect = this.iconRects[i];
-        if ( !rect ) {
-          var x = i * (this.options.iconSize + this.options.iconPadding);
-          var size = this.options.iconSize;
-          rect = this.iconRects[i] = new EffectRect(this.engine, {x, y: 0, w: size, h: size}, {
-            icon: item.icon,
-            color: Item.borderColors[item.type],
-          });
-          rect.item = item;
-        } else if ( rect.item !== item && !rect.changeStateTime ) {
-          // This slot now holds a DIFFERENT item (e.g. a fresh gem synthesized
-          // into a freed slot) — refresh the cached icon so it doesn't keep
-          // showing the previous occupant. Skipped mid merge-animation.
-          rect.item = item;
-          rect.icon = item.icon;
-          rect.color = Item.borderColors[item.type];
-        }
-        // Dim the dragged item and anything it can't merge with, so valid
-        // merge targets (same colour + tier) stay highlighted.
-        var dragItem = this.engine.globals.dragItem;
-        rect.alpha =
-          (item === dragItem || (dragItem && !dragItem.mergesWith(item))) ? 0.3 : 1.0;
-        rect.draw(this.ctx);
+      // Empty, or a gem still flying in from its synth (revealed on land — see
+      // FlyingGem / _spawnGemFlyer): show nothing and forget any stale cache.
+      if ( !item || item._inFlight ) {
+        this.iconRects[i] = null;
+        continue;
+      }
+
+      var rect = this.iconRects[i];
+      if ( !rect || rect.item !== item ) {
+        rect = this.iconRects[i] = new EffectRect(this.engine, {x: i * step, y: 0, w: size, h: size}, {
+          icon: item.icon,
+          color: Item.borderColors[item.type],
+        });
+        rect.item = item;
+      }
+      // Dim the dragged gem itself and anything it can't merge with, so valid
+      // merge targets (same colour + tier) stay highlighted.
+      rect.alpha = (item === dragItem || (dragItem && !dragItem.mergesWith(item))) ? 0.3 : 1.0;
+      rect.draw(this.ctx);
+
+      // White merge-flash over the just-merged slot (matches synth/equip). Ticked
+      // down in Items.update; drawn on top of the new gem's icon.
+      var ff = this.options.owner._flash[i + this.options.index];
+      if ( ff > 0 ) {
+        this.ctx.save();
+        this.ctx.globalAlpha = flashAlpha(ff);
+        this.ctx.fillStyle = "#ffffff";
+        this.ctx.fillRect(i * step, 0, size, size);
+        this.ctx.restore();
       }
     }
 
     // While dragging over an empty slot in this row, outline it as the move target.
-    if ( this.engine.globals.dragItem && this.moveIdx != null && this.dropCol != null ) {
+    if ( dragItem && this.moveIdx != null && this.dropCol != null ) {
       this.slotRects[this.dropCol].draw(this.ctx, "#7ee787");
     }
   }
@@ -497,14 +634,17 @@ class Synthesis extends UIComponent {
       };
     });
 
-    // Drop a gem onto a slot to fuel it; drop an hourglass onto any machine to
-    // inject a burst of growth.
-    this.engine.on("stopDragItem", item => {
-      if ( !item ) return;
-      if ( item.type === "gem" ) this._tryLoad(item);
-      else if ( item.type === "boost" ) this._tryBoost(item);
-    });
+    // Drops are resolved centrally by InventoryMenu._resolveDrop (it calls our
+    // dropRef()/burn() below). No per-component drop listener here — one drop, one
+    // handler, so a gem can't be consumed by two places at once.
   }
+
+  // The slot under the cursor for a GEM drop = the whole hovered machine (colour-
+  // locked in resolveDrop). null when not over a machine. Used by the coordinator.
+  dropRef() { return this.hoverMachine ? { kind: "synth", slot: this.hoverMachine } : null; }
+
+  // White merge-flash on a machine's fuel slot (matches the inventory grid pulse).
+  flashSlot(gem) { this.slotFlash[gem] = SLOT_FLASH_FRAMES; }
 
   // Idle fuel/sec from the loaded gem (0 if empty) — no base rate. In sub-fuel
   // units this is ALSO the exact per-frame idle drip (see FUEL_SCALE).
@@ -512,10 +652,18 @@ class Synthesis extends UIComponent {
     return st.loaded ? st.loaded.tier * IDLE_FUEL_PER_TIER : 0;
   }
 
-  // Burst fuel/sec from an active hourglass (0 if none burning) — the honest
-  // tier rate, shown in the readout and used as the per-frame drain (sub-fuel).
+  // Burst fuel/sec of the CURRENTLY burning hourglass (queue head; 0 if none) —
+  // the honest tier rate, shown in the readout and used as the per-frame drain.
   _burstFuel(st) {
-    return (st.burstLeft || 0) > 0 ? (st.burstRate || 0) : 0;
+    var head = st.burstQueue && st.burstQueue[0];
+    return head ? head.rate : 0;
+  }
+
+  // Total seconds of burn left across the whole queue (head + everything waiting).
+  _burstSeconds(st) {
+    var frames = 0;
+    (st.burstQueue || []).forEach(b => { if ( b.rate ) frames += b.left / b.rate; });
+    return frames / 60;
   }
 
   // Sub-fuel needed for one gem at this output level. Integer, so `fuel >= cost`
@@ -524,66 +672,39 @@ class Synthesis extends UIComponent {
     return GEN_SECONDS * FUEL_SCALE * Math.pow(2, (level || 1) - 1);
   }
 
-  _tryLoad(item) {
-    if ( !this.hoverSlot || item.type !== "gem" ) return;
-    // COLOUR-LOCKED: a synth only accepts its OWN colour as fuel (red gems fuel
-    // the red synth, etc.). Each colour is its own tree you climb independently —
-    // a maxed red gem can't be dumped into the blue synth to leapfrog it. Wrong
-    // colour = silent no-op; the gem snaps back to where it came from.
-    if ( item.color + "Gem" !== this.hoverSlot ) return;
-    // Dropping a synth gem back onto its own slot = no-op (don't self-merge).
-    var src = this.engine.globals.dragSource;
-    if ( src && src.kind === "synth" && src.slot === this.hoverSlot ) return;
-    var st = this.inventory.machines[this.hoverSlot];
-    // The fuel gem sits in the slot permanently (NOT consumed) and charges the
-    // machine forever — its tier sets the fuel rate (colour is fixed by the slot).
-    if ( st.loaded ) {
-      // Drop a MATCHING gem (same colour + tier) onto a loaded slot to merge it
-      // up in place. Otherwise swap, returning the old fuel gem to your bag.
-      var next = Item.list[item.name]?.craft?.[item.name];
-      if ( item.name === st.loaded.name && next ) {
-        st.loaded = { name: next, tier: st.loaded.tier + 1 };
-        this.inventory.clearSource(item, this.engine.globals.dragSource);
-        // Same merge feedback as the inventory grid: a poof off the cursor + a
-        // brief flash on the slot.
-        this.engine.register(new EffectRect(this.engine, this.engine.globals.cursor.rect, {
-          color: item.borderColor, icon: item.icon, grow: -0.6, fade: 0.06,
-        }));
-        this.slotFlash[this.hoverSlot] = SLOT_FLASH_FRAMES;
-        this.engine.trigger("saveRequested");
-        return;
-      }
-      this.inventory.add(st.loaded.name);
-    }
-    st.loaded = { name: item.name, tier: item.tier };
-    this.inventory.clearSource(item, this.engine.globals.dragSource);
-    this.engine.trigger("saveRequested");
-  }
-
-  // Sacrifice an hourglass for a flat +fuel/sec burst (item.fuel) over a fixed
-  // duration (item.seconds). Works on an empty synth too. Stacking extends the
-  // timer and takes the higher burst rate.
-  _tryBoost(item) {
+  // Sacrifice an hourglass for a +fuel/sec burst (item.fuel) over a fixed duration
+  // (item.seconds). Works on an empty synth too. Called by InventoryMenu._resolveDrop
+  // when a boost is released over a machine (gem loads go through resolveDrop).
+  //
+  // PRIORITY-QUEUE model: each hourglass is its OWN burn (`{rate, left}` sub-fuel)
+  // that runs for its full duration at its own rate. The queue is kept sorted by
+  // rate DESCENDING and only the head (highest fuel/s) burns, so a big cell you
+  // drop jumps ahead of a small one still burning — and that small one resumes
+  // afterward with its remaining fuel intact. Exact regardless of interleaving:
+  // `left` is always a whole multiple of `rate` (starts rate×seconds×FUEL_SCALE,
+  // drains rate/frame), so preemption changes only WHICH cell drains a frame, never
+  // the amount. Total time = Σ(left/rate); the rate readout follows the head.
+  burn(item) {
     if ( !this.hoverMachine ) return;
     var m = this.machines.find(x => x.gem === this.hoverMachine);
     var st = this.inventory.machines[this.hoverMachine];
     if ( !m || !st ) return;
-    var rate = item.fuel || 0;                                       // fuel/s == sub-fuel/frame
-    var total = rate * (item.seconds || BURST_SECONDS) * FUEL_SCALE; // EXACT sub-fuel this hourglass delivers
-    // ONE-TIME starter bonus: the FIRST hourglass burned on a save delivers
-    // DOUBLE fuel at DOUBLE rate. A bare T1 is ½ a gem, so doubled fuel = exactly
-    // one gem (exact integer math — no margin), and doubling the rate too means it
-    // still burns in the normal ~BURST_SECONDS instead of twice as long. The flag
-    // persists in the save, so no later hourglass is boosted.
+    var rate = item.fuel || 0;                          // fuel/s == sub-fuel/frame
+    var seconds = item.seconds || BURST_SECONDS;
+    // ONE-TIME starter bonus: the FIRST hourglass burned on a save burns at DOUBLE
+    // rate. Since its fuel = rate × seconds, doubling the rate doubles the fuel too
+    // (a bare T1 → exactly one full gem) while still draining in ~BURST_SECONDS.
     if ( !this.inventory.firstHourglassBonusUsed ) {
-      total *= 2;   // double fuel  → one full gem
-      rate  *= 2;   // double speed → burns in ~BURST_SECONDS, not ~2× as long
+      rate *= 2;
       this.inventory.firstHourglassBonusUsed = true;
     }
-    // Reservoir model: deposits are ADDITIVE and exact (stacking two hourglasses
-    // delivers exactly the sum of their fuel), drained at the highest tier's rate.
-    st.burstRate = Math.max(st.burstRate || 0, rate);
-    st.burstLeft = (st.burstLeft || 0) + total;
+    var left = rate * seconds * FUEL_SCALE;             // EXACT sub-fuel; drains at `rate` → `seconds`
+    // Insert sorted by rate desc, BEFORE the first strictly-lower-rate cell. Stable
+    // for ties, so equal-rate cells keep arrival order (a fresh cell never preempts
+    // an in-progress same-rate burn).
+    var q = st.burstQueue = st.burstQueue || [];
+    var at = q.findIndex(b => b.rate < rate);
+    if ( at === -1 ) q.push({ rate, left }); else q.splice(at, 0, { rate, left });
     this.inventory.remove(item);
     this.engine.sounds.play("fireball", { volume: 0.4 });
     this.engine.trigger("saveRequested");
@@ -658,22 +779,24 @@ class Synthesis extends UIComponent {
       st.xp = st.xp || 0;
       st.fuel = st.fuel || 0;
       st.fuel += this._idleFuel(st);                 // idle drip (sub-fuel/frame, whole)
-      if ( (st.burstLeft || 0) > 0 ) {               // burst: drain the reservoir, exactly
-        var drain = Math.min(st.burstRate || 0, st.burstLeft);
+      var head = st.burstQueue && st.burstQueue[0];  // head = highest-rate cell (queue is sorted desc)
+      if ( head ) {
+        var drain = Math.min(head.rate, head.left);  // exact: left is a whole multiple of rate
         st.fuel += drain;
-        st.burstLeft -= drain;
+        head.left -= drain;
         this._emitFire(m);
+        if ( head.left <= 0 ) st.burstQueue.shift();  // spent → next in queue starts next frame
       }
       var cost = this._gemCost(st.level);
       while ( st.fuel >= cost ) {
         var made = this.inventory.add(gemName(m.gem, st.level));
         this.engine.trigger("gemSynthed", made, m.gem);   // fly it into its slot (if panel open)
         st.fuel -= cost;
-        // XP: every LEVEL_GEMS gems produced levels the machine up one tier, so
+        // XP: producing levelGems(level) gems levels the machine up one tier, so
         // it then starts you at the next gem tier (capped at GEM_MAX_TIER).
         if ( st.level < GEM_MAX_TIER ) {
           st.xp += 1;
-          if ( st.xp >= LEVEL_GEMS ) { st.xp = 0; st.level += 1; cost = this._gemCost(st.level); }
+          if ( st.xp >= levelGems(st.level) ) { st.xp = 0; st.level += 1; cost = this._gemCost(st.level); }
         }
       }
       // Mild idle "smoulder": a gem in the slot slowly burns the bar upward.
@@ -705,7 +828,7 @@ class Synthesis extends UIComponent {
     }
 
     // Smouldering crackle bed plays whenever any machine is mid-burn.
-    var anyBurning = this.machines.some(m => (this.inventory.machines[m.gem]?.burstLeft || 0) > 0);
+    var anyBurning = this.machines.some(m => (this.inventory.machines[m.gem]?.burstQueue?.length || 0) > 0);
     if ( anyBurning ) this.crackle.start();
     else this.crackle.stop();
   }
@@ -718,7 +841,7 @@ class Synthesis extends UIComponent {
     this.machines.forEach(m => {
       var st = this.inventory.machines[m.gem] || { fuel: 0 };
       var level = st.level || 1, xp = st.xp || 0;
-      var surging = (st.burstLeft || 0) > 0;
+      var surging = (st.burstQueue?.length || 0) > 0;
       var r = m.body;
       ctx.save();
       ctx.fillStyle = "#10151f";
@@ -738,7 +861,7 @@ class Synthesis extends UIComponent {
       ctx.fillStyle = "#0c0c12";
       ctx.fillRect(bx, by, bw, bh);
       ctx.fillStyle = "#ffd84d";
-      var xpH = level < GEM_MAX_TIER ? bh * (xp / LEVEL_GEMS) : bh;
+      var xpH = level < GEM_MAX_TIER ? bh * (xp / levelGems(level)) : bh;
       ctx.fillRect(bx, by + bh - xpH, bw, xpH);
       ctx.lineWidth = 1;
       ctx.strokeStyle = "#5a5a3a";
@@ -773,7 +896,11 @@ class Synthesis extends UIComponent {
       if ( st.loaded ) {
         this.engine.images.get(Item.list[st.loaded.name].icon).draw(ctx, sl.x + 2, sl.y + 2, sl.w - 4, sl.h - 4);
       } else {
-        Text.draw(ctx, "+", sl.x + sl.w / 2, sl.y + 7, { fontSize: 20, fontColor: "#3a4a5a", center: true });
+        // Faint "ghost" of this slot's tier-1 gem so its colour reads at a glance.
+        ctx.save();
+        ctx.globalAlpha = 0.22;
+        this.engine.images.get(Item.list[m.gem].icon).draw(ctx, sl.x + 2, sl.y + 2, sl.w - 4, sl.h - 4);
+        ctx.restore();
       }
       // Fuel/sec readout: IDLE (loaded gem) always, plus BURST (active hourglass)
       // beside it while burning. Kept inside the panel so it isn't clipped below.
@@ -831,14 +958,13 @@ class Synthesis extends UIComponent {
       ctx.restore();
     }
 
-    // Burn countdown on top of each boosting machine (seconds of 10× left; with
-    // stacked hourglasses this shows the accumulated time). Dark backing for
-    // legibility over the flames.
+    // Burn countdown on top of each boosting machine — total time left across the
+    // whole queue (head + everything waiting). Dark backing for legibility.
     this.machines.forEach(m => {
       var st = this.inventory.machines[m.gem];
-      if ( !st || (st.burstLeft || 0) <= 0 ) return;
+      if ( !st || !(st.burstQueue?.length) ) return;
       var r = m.body;
-      var label = (st.burstLeft / st.burstRate / 60).toFixed(1) + "s";
+      var label = this._burstSeconds(st).toFixed(1) + "s";
       var tx = r.x + r.w / 2, ty = r.y + 18;   // below the tier label
       Text.draw(ctx, label, tx + 1, ty + 1, { fontSize: 11, fontColor: "#1a0d00", center: true });
       Text.draw(ctx, label, tx, ty, { fontSize: 11, fontColor: "#ffe8a0", center: true });
@@ -854,15 +980,12 @@ class Equipment extends UIComponent {
   static SLOT_TYPES = { primary: "gem", effect: "gem", left: "gem", leftEffect: "gem", right: "gem", rightEffect: "gem" };
   // Tint for the little effect-name label drawn beside the effect slot.
   static LABEL_COLORS = { red: "#ff6b6b", blue: "#7dd3fc", yellow: "#ffd84d", white: "#e2e8f0" };
-  static HELPER_LABEL = "#7fe3ee";   // matches the base-helper tint
+  static HELPER_LABEL = "#7fe3ee";   // matches the helper turret tint (Helper.TINT)
 
   initialize() {
     super.initialize();
 
     this.borderRect = new BoundingRect(0, 0, this.width, this.height);
-
-    this.base = new Sprite(this.engine.images.get("base").img, this.width/2, this.height);
-    this.base.rad = 3*Math.PI/2;
 
     this.inventory = this.engine.globals.inventory;
     this.equipment = this.inventory.equipment;
@@ -891,12 +1014,9 @@ class Equipment extends UIComponent {
     var hWeaponX = cx => cx - size - hGap / 2;
     var hEffectX = cx => cx + hGap / 2;
 
-    this.helperSprites = {};
-    ["left", "right"].forEach(s => {
-      var sp = new Sprite(this.engine.images.get("base-helper").img, helperX[s], H, helperScale);
-      sp.rad = 3*Math.PI/2;
-      this.helperSprites[s] = sp;
-    });
+    // Procedural turret draw params (the old base/base-helper sprites are gone).
+    // Aim straight up; the play screen's hand-rolled turret, scaled to the panel.
+    this.helperDrawX = helperX;
 
     this.equipSlots = {
       primary: new BoundingRect(center, pairY, size, size),
@@ -920,51 +1040,16 @@ class Equipment extends UIComponent {
     this.weaponBadge = { x: W / 2, y: 112, r: 22 };
     this.weaponIconRect = new BoundingRect(W / 2 - 24, 112 - 24, 48, 48);
 
-    // Equip slots behave like inventory slots: drop a gem on an empty slot to
-    // equip, a matching gem to merge in place, a DIFFERENT gem to swap.
-    this.engine.on("stopDragItem", (item) => {
-      if ( !this.equipHover ) return;
-      var slot = this.equipHover;
-      if ( item.type !== Equipment.SLOT_TYPES[slot] ) return;
-      var src = this.engine.globals.dragSource;
-      var current = this.equipment[slot];
-      if ( !current ) {
-        this.inventory.clearSource(item, src);
-        this.equipment[slot] = item;
-        this.engine.trigger("itemEquipped");
-        this.engine.trigger("openInventory");
-        this.engine.trigger("saveRequested");
-      } else if ( current === item ) {
-        return;   // dropped back on its own slot
-      } else if ( item.mergesWith(current) ) {
-        var result = new Item(this.engine, item.stats.craft[item.name]);
-        this.inventory.clearSource(item, src);
-        this.equipment[slot] = result;
-        this._mergeFx(item, slot);
-        this.engine.trigger("itemsMerged");
-        this.engine.trigger("openInventory");
-        this.engine.trigger("saveRequested");
-      } else {
-        // SWAP: equip the dragged gem; the displaced gem goes to the drag's origin.
-        if ( src && src.kind === "equip" ) this.equipment[src.slot] = current;
-        else if ( src && src.kind === "synth" ) this.inventory.machines[src.slot].loaded = { name: current.name, tier: current.tier };
-        else { this.inventory.remove(item); this.inventory.add(current); }
-        this.equipment[slot] = item;
-        this.engine.trigger("itemEquipped");
-        this.engine.trigger("openInventory");
-        this.engine.trigger("saveRequested");
-      }
-    });
+    // Equip slots behave like inventory slots (drop on empty = equip, matching gem
+    // = merge, different = swap) — but that logic now lives in inventory.resolveDrop,
+    // driven by InventoryMenu._resolveDrop. No per-component drop listener here.
   }
 
-  // Merge feedback shared by the equip slots: a poof off the cursor + a white
-  // flash on the slot (mirrors the inventory grid's merge animation).
-  _mergeFx(item, slot) {
-    this.engine.register(new EffectRect(this.engine, this.engine.globals.cursor.rect, {
-      color: item.borderColor, icon: item.icon, grow: -0.6, fade: 0.06,
-    }));
-    this.equipFlash[slot] = SLOT_FLASH_FRAMES;
-  }
+  // The equip slot under the cursor (or null). Used by the drop coordinator.
+  dropRef() { return this.equipHover ? { kind: "equip", slot: this.equipHover } : null; }
+
+  // White merge-flash on a slot (mirrors the inventory grid's merge pulse).
+  flashSlot(slot) { this.equipFlash[slot] = SLOT_FLASH_FRAMES; }
 
   onMouseClick(event) {
     // Pick up the equipped gem to drag it (out to inventory = unequip; onto
@@ -1147,10 +1232,20 @@ class Equipment extends UIComponent {
   }
 
   drawComponent() {
-    this.base.draw(this.ctx);
-    // The two helper turrets, behind their slots.
-    this.helperSprites.left.draw(this.ctx);
-    this.helperSprites.right.draw(this.ctx);
+    // The main turret + the two helper minis (the same hand-rolled art as the
+    // play screen), aimed up, behind their slots. Shape = equipped weapon type,
+    // glow colour = equipped effect (white = none).
+    var up = -Math.PI / 2, eq = this.equipment;
+    drawTurret(this.ctx, {
+      x: this.width / 2, y: this.height, aim: up, scale: 0.8,
+      weapon: weaponTypeOf(eq.primary), effectColor: effectColorOf(eq.effect), phase: 0.4,
+    });
+    ["left", "right"].forEach(s => {
+      drawTurret(this.ctx, {
+        x: this.helperDrawX[s], y: this.height, aim: up, scale: 0.45, tint: "#35c9d6",
+        weapon: weaponTypeOf(eq[s]), effectColor: effectColorOf(eq[s + "Effect"]), phase: 0.4,
+      });
+    });
     this.borderRect.draw(this.ctx);
     for ( var key in this.equipment ) {
       var slot = this.equipSlots[key];
@@ -1182,6 +1277,9 @@ class Equipment extends UIComponent {
     // colour conveys the equipped effect, so no text beside the effect slot.)
 
     var fmt = n => (Math.round(n * 100) / 100).toString();
+    // Effect damage modifier in parens: "(+X)" for a buff, "(−X)" for a penalty
+    // (chain trades per-hit damage for free reach), nothing when ~0.
+    var dmgMod = b => Math.abs(b) <= 0.001 ? "" : " (" + (b < 0 ? "−" : "+") + fmt(Math.abs(b)) + ")";
 
     // Current-weapon badge (shape = type, colour = effect). The player's weapon
     // readout is ALWAYS shown (not just on hover); helper readouts are on-hover.
@@ -1191,7 +1289,7 @@ class Equipment extends UIComponent {
 
     var lines = [
       { t: stats.name, c: badgeColor },
-      { t: "Dmg " + fmt(stats.base) + (stats.bonus > 0.001 ? " (+" + fmt(stats.bonus) + ")" : ""), c: "#e8edf6" },
+      { t: "Dmg " + fmt(stats.base) + dmgMod(stats.bonus), c: "#e8edf6" },
       { t: "Rate " + fmt(stats.rate) + "/s", c: "#e8edf6" },
     ];
     (stats.effectLines || []).forEach(t => lines.push({ t, c: stats.effectColor ?? "#cbd5e1" }));
@@ -1208,7 +1306,7 @@ class Equipment extends UIComponent {
         ? [ { t: hs.name, c: "#9aa7c2" } ]
         : [
             { t: "Helper — " + hs.name, c: Equipment.HELPER_LABEL },
-            { t: "Dmg " + fmt(hs.base) + (hs.bonus > 0.001 ? " (+" + fmt(hs.bonus) + ")" : ""), c: "#e8edf6" },
+            { t: "Dmg " + fmt(hs.base) + dmgMod(hs.bonus), c: "#e8edf6" },
             { t: "Rate " + fmt(hs.rate) + "/s", c: "#e8edf6" },
           ];
       if ( !hs.none ) (hs.effectLines || []).forEach(t => hlines.push({ t, c: hs.effectColor ?? "#cbd5e1" }));

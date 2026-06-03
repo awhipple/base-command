@@ -1,4 +1,5 @@
 import Enemy from "./Enemy.js";
+import Strafer from "./Strafer.js";
 import Image from "../engine/gfx/Image.js";
 import Item from "./Item.js";
 
@@ -30,13 +31,17 @@ export default class Levels {
       {
         enemies: 10,
         spawnRate: 1.0,
-        enemyHp: 18,
+        enemyHp: 10,              // lower than a grunt — the blink-dodge is the difficulty
+        phaser: true,            // green enemies that ghost + slide aside each time they're hit
+        enemyType: "green",
         reward: "hourglass3", chance: 100,
       },
       {
         enemies: 12,
         spawnRate: 0.9,
         enemyHp: 32,
+        straferChance: 45,        // ~45% of spawns are fast diving Strafers
+        straferHp: 22,            // a bit squishier than a grunt (they're evasive)
         reward: "hourglass4", chance: 100,
       },
       {
@@ -102,13 +107,24 @@ export default class Levels {
   set selected(val) {
     val = val - 1;
     if ( val >= 0 && val <= this.list.length - 1 ) {
+      var changed = this._selected !== val;
       this._selected = val;
       this.current = this.list[val];
+      // Persist the choice so a reload reopens on the same level. (No-op during
+      // construction/restore — the autosave listener isn't installed yet.)
+      if ( changed ) this.engine.trigger("saveRequested");
       if ( !this.current.icon ) {
         var icon = document.createElement("canvas");
         icon.width = 100;
         icon.height = 100;
-        (new Enemy(this.engine, 50, 50, this.current.enemyHp, this.current.enemyType)).draw(icon.getContext("2d"), {noHp: true});
+        // Strafer-flavoured levels show the diving dart (nose-up) as their icon.
+        if ( this.current.straferChance ) {
+          var s = new Strafer(this.engine, 0, 0, this.current.straferHp ?? this.current.enemyHp, "orange");
+          s.x = 50; s.y = 50; s.angle = -Math.PI / 2;
+          s.draw(icon.getContext("2d"), {noHp: true});
+        } else {
+          (new Enemy(this.engine, 50, 50, this.current.enemyHp, this.current.enemyType)).draw(icon.getContext("2d"), {noHp: true});
+        }
         this.current.icon = new Image(icon);
       }
     }

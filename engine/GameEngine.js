@@ -56,6 +56,10 @@ export default class GameEngine {
       }, 50);
       this.mouse[MouseButtonNames[event.button] || event.button] = true;
 
+      // Keep the phone screen awake while playing (a tap is a gesture context,
+      // which some browsers require to grant the wake lock).
+      this._keepScreenAwake();
+
       this._sendMouseEvent(event, "onMouseClick");
     });
 
@@ -77,6 +81,15 @@ export default class GameEngine {
       this.fullscreen = !!document.fullscreenElement;
     });
 
+    // No pinch / double-tap zoom — the game is a fixed 1:1 canvas and owns its
+    // own touch input. The viewport meta handles Android; iOS ignores it, so
+    // block the zoom gestures here too. Single-finger touch is unaffected.
+    ["gesturestart", "gesturechange", "gestureend"].forEach(ev =>
+      document.addEventListener(ev, e => e.preventDefault(), { passive: false }));
+    document.addEventListener("touchmove", e => {
+      if ( e.touches.length > 1 ) e.preventDefault();   // pinch = 2+ finger move
+    }, { passive: false });
+
     // When the app is backgrounded (tabbed away, screen off, switched apps),
     // requestAnimationFrame already stops so gameplay halts on its own — but
     // HTML5 Audio keeps playing. Pause all sound on hide, resume on return.
@@ -88,6 +101,8 @@ export default class GameEngine {
         // to avoid a catch-up burst of update() ticks on the first frame back.
         this.nextTick = new Date().getTime();
         this.sounds.resumeAll();
+        // The wake lock auto-releases while hidden — re-acquire on return.
+        this._keepScreenAwake();
       }
     });
     if ( options.showFullscreenSplash ) {
@@ -241,6 +256,20 @@ export default class GameEngine {
 
   load() {
     return this.images.load();
+  }
+
+  // Hold a screen wake lock so phones don't dim/sleep while the game is open.
+  // Idempotent + safe to call repeatedly; no-op where unsupported (older iOS) or
+  // while hidden. The lock auto-releases when the page is hidden, so we re-acquire
+  // it on visibility return and on user gestures (see the constructor).
+  _keepScreenAwake() {
+    try {
+      if ( !("wakeLock" in navigator) || document.hidden ) return;
+      if ( this._wakeLock && !this._wakeLock.released ) return;
+      navigator.wakeLock.request("screen")
+        .then(lock => { this._wakeLock = lock; })
+        .catch(() => {});   // not allowed / interrupted — ignore
+    } catch ( e ) { /* unsupported — ignore */ }
   }
 
   goFullscreen() {

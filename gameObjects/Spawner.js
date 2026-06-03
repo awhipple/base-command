@@ -1,4 +1,6 @@
 import Enemy from "./Enemy.js";
+import Strafer from "./Strafer.js";
+import Phaser from "./Phaser.js";
 import Circle from "../engine/gfx/shapes/Circle.js";
 import Boss from "./Boss.js";
 
@@ -27,14 +29,31 @@ export default class Spawner {
       this.nextSpawn -= 1/60;
       if ( this.enemies > 0 && this.nextSpawn < 0 ) {
         this.enemies--;
-        this.nextSpawn += this.engine.globals.levels.current.spawnRate;
+        var lvl = this.engine.globals.levels.current;
+        this.nextSpawn += lvl.spawnRate;
 
-        this.engine.register(new Enemy(
-          this.engine, 
-          Math.random()*(this.engine.window.width+200)-100, -20,
-          this.engine.globals.levels.current.enemyHp,
-          this.engine.globals.levels.current.enemyType), 
-        "enemy");
+        // A fraction of spawns (level.straferChance %) come in as fast diving
+        // Strafers instead of straight-falling grunts.
+        if ( lvl.straferChance && Math.random()*100 < lvl.straferChance ) {
+          this.engine.register(new Strafer(
+            this.engine, 0, 0, lvl.straferHp ?? lvl.enemyHp, "orange"),
+          "enemy");
+        } else if ( lvl.phaser ) {
+          // Green blink-dodge enemies: ghost + slide aside each time they're hit.
+          this.engine.register(new Phaser(
+            this.engine,
+            Math.random()*(this.engine.window.width+200)-100, -20,
+            lvl.enemyHp,
+            lvl.enemyType ?? "green"),
+          "enemy");
+        } else {
+          this.engine.register(new Enemy(
+            this.engine,
+            Math.random()*(this.engine.window.width+200)-100, -20,
+            lvl.enemyHp,
+            lvl.enemyType),
+          "enemy");
+        }
       }
     }
 

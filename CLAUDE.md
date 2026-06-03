@@ -86,11 +86,24 @@ helpers like `slideDirectionTowards`).
 ## Game objects (gameObjects/)
 
 - **`Base.js`** — the player's turret at the bottom. Aims at the
-  mouse/touch, fires the **primary-slot gem** (the gem IS the weapon) on a timer
-  (`fireIn`); fire cadence = `stats.speed.val * weapon.projectile.speed`
-  (so `projectile.speed` is **fire-rate**, not velocity). Draws the aim
-  sight for `laserSight` weapons. Plays the electric `zap` sound when the
-  weapon is a laser (`weapon.projectile.laser`), else the `shot` sound.
+  mouse/touch (stored as `this.aim`), fires the **primary-slot gem** (the gem IS
+  the weapon) on a timer (`fireIn`); fire cadence = `stats.speed.val *
+  weapon.projectile.speed` (so `projectile.speed` is **fire-rate**, not
+  velocity). Draws the aim sight for `laserSight` weapons. Plays the electric
+  `zap` sound when the weapon is a laser (`weapon.projectile.laser`), else the
+  `shot` sound.
+- **`TurretSprite.js`** — the **hand-rolled procedural turret** (`drawTurret`),
+  shared by the player (`Base`, scale 1), the helpers (`Helper`, scale 0.5,
+  cyan tint), and the inventory `Equipment` panel. A fixed armored hull + a
+  rotating gun whose **aperture is the weapon SHAPE** (laser = slim barrel +
+  lens emitter; ball = wide cannon bore + charge orb; stinger = two side
+  barrels; basic = one dim barrel) and whose **glow colour is the EFFECT** (lens,
+  orb, stinger tips, reactor core, muzzle flash — white when the effect slot is
+  empty). `TURRET.reach(scale)`/`TURRET.side(scale)` are the **single source of
+  truth for firing geometry** — `Base`/`Helper` compute `firePos` + the stinger
+  `spread` from them so the drawn muzzle == the projectile spawn at any scale.
+  `weaponTypeOf(item)` → shape key; `effectColorOf(gem)` → glow colour. (The old
+  `base.png` "sun" sprite + the `base-helper` tint are gone.)
 - **`Projectile.js`** — one fired shot. Normal shots move (`xv/yv`),
   optionally **`homing`** (curves toward nearest enemy), optionally leave a
   particle **`trail`**; `color` picks the body image (`<color>-part-circle`)
@@ -240,23 +253,27 @@ route the gem correctly wherever it lands.
   every slot is open (a non-sacrifice unlock may come later). All slots
   saved/restored in `Game.js`.
 - **Helper turrets (`Helper.js`):** the `left`/`right` slots each drive a small
-  side turret (registered in `Game.js` as `"helper"`, scale 0.38). They take
-  only a weapon (no effect gem), **smoothly** swing toward the nearest enemy
-  (`slideDirectionTowards`, `TURN_RATE`), and fire at half rate for half damage
+  side turret — a **half-scale "mini-you"** drawn by the shared procedural turret
+  (`TurretSprite.js`, `TURRET_SCALE = 0.5`, cyan `TINT`); registered in `Game.js`
+  as `"helper"`. Each takes a weapon gem **AND its own effect gem** (`slot` +
+  `slot+"Effect"`), **smoothly** swings toward the nearest enemy
+  (`slideDirectionTowards`, `TURN_RATE`), and fires at half rate for half damage
   (`FIRE_MULT`/`DAMAGE_MULT` = 0.5 → ~25% each, ~50% together) via
-  `weapon.shoot(x,y,dir,{noEffect:true, damageScale:0.5})`. Active only while
-  `globals.base.on`. Both share one tint image `base-helper`
-  (`Game.js#generateTintedImage`, source-atop wash) so they match each other but
-  differ from the main base. The inventory `Equipment` panel mirrors the play
-  screen: both helper turrets sit off the bottom corners with their weapon slot
-  floating above each one's head (the player's primary/effect slots float above
-  the main base, center-bottom).
+  `weapon.shoot(x,y,dir,{effectGem, damageScale:0.5, spread})` — the **`spread`**
+  is the helper's scaled stinger offset (`TURRET.side(0.5)`) so its two shots
+  leave the drawn side barrels. Active only while `globals.base.on`. The
+  inventory `Equipment` panel mirrors the play screen with the same turret art:
+  both helpers off the bottom corners, weapon+effect slots floating above each
+  head (the player's primary/effect slots float above the main turret).
 - **How a shot is built:** the primary gem's `projectile` (from `gemWeapon`) is
   the weapon shape + tier-scaled damage/fire-rate; `Item.shoot` then reads the
-  *effect-slot* gem's `effect` and bakes `color` (→ body image + trail),
-  `homing`/`homingTurn`/`laserArc` (homing), `chain` (chain), and `aoe`/
-  `aoeRadius` (explosive) into the per-shot options. Helpers pass
-  `{noEffect:true, damageScale:0.5}` (ignore the effect gem, half damage).
+  *effect-slot* gem's `effect` and bakes `color`, `homing`/`homingTurn`/
+  `laserArc` (homing), `chain` (chain), and `aoe`/`aoeRadius` (explosive) into the
+  per-shot options. **Shot colour = the EFFECT gem's colour, or WHITE when the
+  effect slot is empty** (weapon type = SHAPE, effect = COLOUR/element): a bare
+  laser is a white beam, a bare ball fires white, etc. — equip a red/blue/yellow
+  effect to tint the shots *and* the turret aperture. Helpers pass
+  `{effectGem, damageScale:0.5, spread}` (their own effect slot, half damage).
 - **Explosive** (red effect) sets `aoe` → on hit `Projectile._explode` damages
   all enemies in `aoeRadius` (damage falls off from the center) + spawns the
   `aoeBlast` particles; on a laser, `_fireLaser` explodes at the beam's end.

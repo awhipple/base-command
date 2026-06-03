@@ -12,6 +12,23 @@ export const HOURGLASS_FUEL = [6, 14, 32, 70, 150, 320, 680]; // fuel/sec, by ti
 export const HOURGLASS_MAX_TIER = HOURGLASS_FUEL.length;
 export const BURST_SECONDS = 5;   // every hourglass burns this long, any tier
 
+// Energy-cell tier ramp (the old "hourglasses" — now sci-fi fuel cells). Each
+// tier climbs a rarity/heat ladder so a brighter, hotter cell instantly reads as
+// "more fuel": blue → cyan → emerald → gold → orange → magenta → white-violet
+// plasma. SINGLE source of truth, shared by the icon generator (Game.js draws
+// the cell from these) and the inventory slot border (per-tier, set below).
+// {glow} = outer bloom / deepest tone, {core} = the orb body + slot border,
+// {hot} = the white-hot centre.
+export const ENERGY_TIER_COLORS = [
+  { glow: "#1f5cf0", core: "#5b93ff", hot: "#d4e6ff" }, // T1 blue
+  { glow: "#08a6cc", core: "#34d6f2", hot: "#d6fbff" }, // T2 cyan
+  { glow: "#10a64f", core: "#3fe389", hot: "#d8ffe9" }, // T3 emerald
+  { glow: "#c8930f", core: "#ffd24a", hot: "#fff6d2" }, // T4 gold
+  { glow: "#d85a12", core: "#ff9648", hot: "#ffe5d0" }, // T5 orange
+  { glow: "#c41680", core: "#ff5cb6", hot: "#ffd9ee" }, // T6 magenta
+  { glow: "#7b2ff5", core: "#c08bff", hot: "#ffffff" }, // T7 plasma violet
+];
+
 // Hourglasses (type "boost"): dropped by levels, dragged onto a synthesizer for
 // a flat fuel/sec burst (with a fiery particle burn). Mergeable. Tooltip text is
 // GENERATED from the constants above — changing them never needs a manual edit.
@@ -22,13 +39,16 @@ function buildHourglasses() {
     var fuel = HOURGLASS_FUEL[tier - 1];
     var entry = {
       type: "boost",
-      color: "sand",
+      color: "energy",
       tier,
       fuel,
       seconds: BURST_SECONDS,
       value: 20 * Math.pow(2, tier - 1),
-      icon: "hourglass-" + tier,
-      toolTipName: "Hourglass T" + tier,
+      icon: "hourglass-" + tier,   // image name kept stable; art is now an energy cell
+      // Per-tier slot/cursor border matches the cell's core colour so the tier
+      // reads even at a glance in the grid.
+      borderColor: (ENERGY_TIER_COLORS[tier - 1] || ENERGY_TIER_COLORS[0]).core,
+      toolTipName: "Energy Cell T" + tier,
       description: "Drop on a synthesizer for +" + fuel + " fuel/s for "
         + BURST_SECONDS + "s. Merge two to make a bigger one.",
     };
@@ -41,30 +61,49 @@ function buildHourglasses() {
 // Per-tier effect config for a gem colour. Tier 1 is the synthesized base;
 // merging two of the same colour+tier yields the next tier (see buildGems).
 // Numbers are deliberately rough — easy to tune later.
+// The three effects trade PER-TARGET damage against REACH, so each owns a niche:
+//   • homing (blue)  — single target, so it hits the HARDEST per shot. Your tool
+//                       for one fast, evasive target (e.g. a Strafer).
+//   • explosive (red)— only damages enemies clustered near the impact, so it hits
+//                       HARD per target too (beats chain) but needs them bunched.
+//   • chain (yellow) — jumps between enemies at ANY distance = guaranteed, free
+//                       AOE, so it pays for that reach with LOW per-target damage.
+// Net: lone target → homing wins; tight cluster → explosive wins; spread out at
+// range → chain reaches everyone but tickles. (Numbers rough — easy to tune.)
 function gemEffect(color, tier) {
   if ( color === "red" ) {
     // Explosive: shots blast on impact (AOE) — works on ball, stinger, or laser.
-    // Radius grows with tier. Damage falls off from the centre (see Projectile).
-    return { color, aoe: true, aoeRadius: Math.round(120 * (1 + 0.2 * (tier - 1))), label: "Explosive T" + tier };
+    // Radius grows with tier; damage falls off centre→rim (see Projectile). High
+    // per-target multiplier so a centred hit on a cluster hurts — its weakness is
+    // it does nothing to enemies that aren't bunched up.
+    return {
+      color, aoe: true,
+      aoeRadius: Math.round(120 * (1 + 0.2 * (tier - 1))),
+      damageMult: 1.0 + 0.044 * (tier - 1),                        // T1=1.0 → T10≈1.4 per enemy; the multi-hit is the payoff
+      label: "Explosive T" + tier,
+    };
   }
   if ( color === "blue" ) {
-    // Homing scales QUADRATICALLY so it feels weak/loose at low tiers (a gentle
-    // nudge — you still have to aim) and only zeroes in tightly at high tiers.
-    // homingTurn T1≈0.001 (turn radius ~5000px, barely curves) → T10=0.1 (~50px,
-    // tight). Same ceiling as before; the early game is just much weaker. (Future:
-    // high tiers are meant for fast, small, evasive enemies that need tight arcs.)
+    // Homing = a FLOOR (always perceptible, even at T1 you can see it curve)
+    // plus a QUADRATIC curve on top, so low tiers feel loose — a clear nudge you
+    // still have to aim — and high tiers zero in tight. homingTurn T1=0.004
+    // (turn radius ~1250px, gently curving) → T10≈0.103 (~50px, tight).
+    // Single-target only, so it carries a BIG damage multiplier to keep pace with
+    // the multi-hit effects — this is the gem you bring to delete one Strafer.
     return {
       color, homing: true,
-      homingTurn: 0.001 * tier * tier,                              // projectile turn rate/frame (quadratic)
-      laserArc: Math.min(Math.PI * 0.6, Math.PI * 0.008 * tier * tier), // laser bend limit (quadratic, caps ~T9)
-      damageMult: 1 + 0.05 * tier,                                  // small dmg, well under white
+      homingTurn: 0.004 + 0.001 * (tier * tier - 1),               // floor + quadratic, per-frame turn rate
+      laserArc: Math.min(Math.PI * 0.6, Math.PI * (0.025 + 0.008 * (tier * tier - 1))), // floor + quadratic bend limit
+      damageMult: 1.5 + 0.167 * (tier - 1),                        // T1=1.5 → T10≈3.0, focused single-target premium
       label: "Homing T" + tier,
     };
   }
   // yellow: chain. T1 = 1 jump (2 enemies); falloff starts gentler than 50% and
-  // improves with tier so deeper chains stay worthwhile.
+  // improves with tier so deeper chains stay worthwhile. LOW base damage (0.5×) —
+  // its value is free, infinite-range coverage, not raw per-hit power.
   return {
     color,
+    damageMult: 0.5,                                               // low per-target — the cost of guaranteed AOE
     chain: { jumps: tier, falloff: Math.min(0.9, 0.6 + 0.03 * (tier - 1)) },
     label: "Chain T" + tier,
   };
@@ -203,18 +242,41 @@ export default class Item {
     var gem = opts.effectGem !== undefined ? opts.effectGem
             : (opts.noEffect ? null : this.engine.globals.inventory?.equipment?.effect);
     var fx = gem?.effect ?? {};
+    // Shot colour comes from the EFFECT gem only — the weapon type is the SHAPE,
+    // the effect is the ELEMENT/colour. With NO effect gem every weapon fires
+    // white ("uncharged"): a bare laser is a white beam, a bare ball is white,
+    // etc. Equip a yellow/red/blue effect to tint it (and the turret aperture).
     var color = fx.color ?? "white";
     var damage = this.engine.globals.stats.power.val * this.projectile.damage * (fx.damageMult ?? 1) * (opts.damageScale ?? 1);
 
     if ( this.projectile.alternate ) {
       this.alt = !this.alt;
-      var dist = 13;
+      // Lateral offset of the two stinger barrels. The firer passes its turret's
+      // scaled spread (TURRET.side) so shots leave the DRAWN side barrels; full
+      // size = 13 (the player), half that for a helper.
+      var dist = opts.spread ?? 13;
       var mod = dir + (this.alt ? -Math.PI/2 : Math.PI/2);
       x += Math.cos(mod) * dist;
       y += Math.sin(mod) * dist;
     }
 
     var small = this.projectile.small;
+
+    // Weapon tier (the primary gem's tier) scales the LOOK of the shot — purely
+    // visual, the hitbox/damage are unchanged. tierF = 0 at T1 … 1 at T10.
+    //   • ball   — dim + small at T1, grows bigger + brighter with tier
+    //   • stinger— body a touch bigger, and its TRAIL swells the most
+    //   • laser  — beam gets thicker + brighter (a wide glow aura at high tier)
+    var tierF = (Math.min(this.tier, GEM_MAX_TIER) - 1) / (GEM_MAX_TIER - 1);
+    var vis;
+    if ( this.projectile.laser ) {
+      vis = { widthScale: 0.8 + 0.7 * tierF, glowBoost: tierF };
+    } else if ( small ) {                                  // stinger: emphasise the trail
+      vis = { drawScale: 0.85 + 0.3 * tierF, drawAlpha: 0.8 + 0.2 * tierF, trailScale: 0.7 + 0.9 * tierF };
+    } else {                                               // ball: dim+small → bright+big
+      vis = { drawScale: 0.72 + 0.5 * tierF, drawAlpha: 0.6 + 0.4 * tierF, trailScale: 0.72 + 0.5 * tierF };
+    }
+
     var opts = {
       ...this.projectile,
       color,
@@ -226,6 +288,7 @@ export default class Item {
       aoeRadius: fx.aoeRadius ?? this.projectile.aoeRadius,
       image: this.engine.images.get(color + "-part-circle"),
       trail: small ? "small" + color[0].toUpperCase() + color.slice(1) : color,
+      ...vis,                                              // per-tier draw scaling
     };
 
     var Type = this.projectile.class ?? Projectile;

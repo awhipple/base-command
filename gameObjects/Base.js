@@ -1,13 +1,17 @@
 import GameObject from "../engine/objects/GameObject.js";
-import Sprite from "../engine/gfx/Sprite.js";
 import { getDirectionFrom, Coord } from "../engine/GameMath.js";
 import Item from "./Item.js";
 import Circle from "../engine/gfx/shapes/Circle.js";
+import { drawTurret, weaponTypeOf, effectColorOf, TURRET } from "./TurretSprite.js";
 
 export default class Base extends GameObject {
   z = 5;
   firePos = new Coord(0, 0);
   on = false;
+  aim = -Math.PI / 2;   // barrel direction (radians); starts pointing up
+  flash = 0;            // decaying muzzle-flash intensity for the turret
+  flashSide = 1;        // which stinger barrel last fired (±1)
+  life = 0;             // tick counter -> idle reactor/lens pulse phase
 
   constructor(engine) {
     super(engine, {
@@ -19,7 +23,6 @@ export default class Base extends GameObject {
 
     this.fireIn = 1/engine.globals.stats.speed.val;
 
-    this.sprite = new Sprite(this.engine.images.get("base").img, this.x, this.y, 1);
     this.pointTo({x: engine.window.width/2, y: 0});
 
     this.engine.onMouseMove(event => {
@@ -30,6 +33,9 @@ export default class Base extends GameObject {
   }
 
   update() {
+    this.life++;
+    this.flash *= 0.8;   // muzzle flash decays each tick
+
     // With no gem equipped, fall back to the basic shot (tiny, 1 dmg, short range)
     // so level 1 is beatable from a cold start.
     var weapon = this.equip.primary ?? Item.NONE;
@@ -42,36 +48,46 @@ export default class Base extends GameObject {
         this.engine.sounds.play("shot", {volume: 0.12});
       }
       setTimeout(() => {
-        if ( weapon.shoot(this.firePos.x, this.firePos.y, this.sprite.rad) && isLaser ) {
-          this.engine.sounds.play("zap", {volume: 0.25});
-        }
+        var hit = weapon.shoot(this.firePos.x, this.firePos.y, this.aim, { spread: TURRET.side(1) });
+        // Light the just-fired aperture (stinger alternates sides; weapon.alt
+        // holds the side the shot just used -> alt ? -side : +side).
+        this.flash = 1;
+        this.flashSide = weapon.alt ? -1 : 1;
+        if ( hit && isLaser ) this.engine.sounds.play("zap", {volume: 0.25});
       }, 150);
     }
   }
 
   pointTo(pointPos) {
-    this.sprite.rad = getDirectionFrom(this.pos, pointPos);
-    this.firePos.x = this.x + Math.cos(this.sprite.rad)*150;
-    this.firePos.y = this.y + Math.sin(this.sprite.rad)*150;
+    this.aim = getDirectionFrom(this.pos, pointPos);
+    this.firePos.x = this.x + Math.cos(this.aim) * TURRET.reach(1);
+    this.firePos.y = this.y + Math.sin(this.aim) * TURRET.reach(1);
   }
 
   draw(ctx) {
     ctx.save();
 
-    this.sprite.draw(ctx);
+    drawTurret(ctx, {
+      x: this.x, y: this.y, aim: this.aim,
+      scale: 1,
+      weapon: weaponTypeOf(this.equip.primary),
+      effectColor: effectColorOf(this.equip.effect),
+      flash: this.flash, flashSide: this.flashSide, phase: this.life / 60,
+    });
 
     var weapon = this.equip.primary ?? Item.NONE;
     if ( weapon.stats.projectile.laserSight ) {
       ctx.globalAlpha = 0.4;
       var point;
       this.engine.getObjects("enemy").forEach(enemy => {
-        var inter = enemy.lineIntercept(this.firePos.x, this.firePos.y, this.sprite.rad);
+        if ( enemy.intangible ) return;   // sight ignores a phased-out enemy
+        var inter = enemy.lineIntercept(this.firePos.x, this.firePos.y, this.aim);
         if ( inter && (!point || inter.y > point.y )) {
           point = inter;
         }
       });
 
-      point = point || {x: this.firePos.x + Math.cos(this.sprite.rad) * 1000, y: this.firePos.y + Math.sin(this.sprite.rad) * 1000};
+      point = point || {x: this.firePos.x + Math.cos(this.aim) * 1000, y: this.firePos.y + Math.sin(this.aim) * 1000};
       ctx.beginPath();
       ctx.strokeStyle = "yellow";
       ctx.lineWidth = 1;

@@ -51,6 +51,13 @@ export default class ToolTip extends GameObject {
     }
   }
 
+  // Tooltip title. Gems always show their tier (toolTipName already appends it for
+  // T2+, so just add it for T1) so you can tell tiers apart at a glance.
+  _title() {
+    var it = this.item;
+    return ( it.type === "gem" && it.tier === 1 ) ? it.toolTipName + " T1" : it.toolTipName;
+  }
+
   draw(ctx) {
     if ( this.item ) {
       this.rect.draw(ctx, this.item.borderColor, "black");
@@ -59,8 +66,11 @@ export default class ToolTip extends GameObject {
       this.iconRect.color = this.item.borderColor;
       this.iconRect.draw(ctx);
 
-      this.itemName.str = this.item.toolTipName;
+      this.itemName.str = this._title();
       this.itemName.draw(ctx);
+
+      // Gems: compact tooltip — icon + name & tier only (no stats / effect / merge).
+      if ( this.item.type === "gem" ) return;
 
       if ( this.item.type === "weapon" ) {
         this.statText.draw(ctx);
@@ -85,8 +95,23 @@ export default class ToolTip extends GameObject {
 
   _recomputeTooltip() {
     var event = this.engine.mouse;
-    
+
+    // Gems use a narrower box than full item tooltips. Set width BEFORE `this.x`
+    // (which derives the left edge from rect.w) so originX lands correctly.
+    this.rect.w = this.item.type === "gem" ? 240 : 300;
     this.x = constrain(event.pos.x, this.rect.w/2 + 10, engine.window.width - this.rect.w/2 - 10);
+
+    // Gems: compact icon + title only. Short box, no stat/description/merge layout.
+    if ( this.item.type === "gem" ) {
+      this.rect.h = 58;
+      this.rect.y = event.pos.y + 40;
+      if ( this.rect.y + this.rect.h > engine.window.height - 10 ) this.rect.y = event.pos.y - 40 - this.rect.h;
+      this.iconRect.x = this.originX + 10;
+      this.iconRect.y = this.originY + 9;
+      this.itemName.x = this.originX + 62;
+      this.itemName.y = this.originY + 16;
+      return;
+    }
 
     if ( this.item.type === "weapon" ) {
       this.statText.str = "Damage: " + Math.floor(this.item.projectile.damage*100) + "%   Rate: " + Math.floor(this.item.projectile.speed*100) + "%";

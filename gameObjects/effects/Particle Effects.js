@@ -39,34 +39,83 @@ export function deathBurst(x, y, color = "#ffffff") {
   }));
   return parts;
 }
-export function aoeBlast(x, y, radius = 90, color = "yellow") {
-  var rgb = BLAST_RGB[color] ?? BLAST_RGB.yellow;
+// A small hit spark at the point a shot lands — for every non-AOE impact
+// (projectile collision or laser endpoint). Much smaller/quicker than a
+// death burst: a core pop + a few sparks flicking outward, all in the shot's
+// colour. `style` lets each weapon read a little differently:
+//   "laser"  — tighter, faster, sharper flick (hit-scan beam)
+//   "bullet" — rounder pop with a touch more spread (default)
+const IMPACT_STYLE = {
+  bullet: { core: 7,  coreGrow: 20, coreLife: 0.16, n: 6, spread: 24, sparkLife: 0.26, sparkR: 3 },
+  laser:  { core: 6,  coreGrow: 16, coreLife: 0.12, n: 5, spread: 18, sparkLife: 0.18, sparkR: 2.4 },
+};
+export function impactSpark(x, y, color = "white", style = "bullet") {
+  var rgb = BLAST_RGB[color] ?? hexToRgb(color);
+  var s = IMPACT_STYLE[style] ?? IMPACT_STYLE.bullet;
   var parts = [];
 
-  // Core flash — a few big white particles snapping outward then gone.
+  // Core flash — a quick bright pop right at the contact point, in the shot's
+  // colour (a red shot pops red, not white).
+  parts.push(new Particle(null, {
+    start: { x, y, radius: s.core, ...rgb, alpha: 1 },
+    end:   { x, y, radius: s.coreGrow, alpha: 0 },
+    lifeSpan: s.coreLife,
+  }));
+  // A few coloured sparks flicking outward.
+  for ( var i = 0; i < s.n; i++ ) {
+    var a = (i / s.n) * Math.PI * 2 + Math.random() * 0.8;
+    var d = s.spread * (0.5 + Math.random() * 0.7);
+    parts.push(new Particle(null, {
+      start: { x, y, radius: s.sparkR, ...rgb, alpha: 1 },
+      end:   { x: x + Math.cos(a) * d, y: y + Math.sin(a) * d, radius: 0.5, alpha: 0 },
+      lifeSpan: s.sparkLife * (0.7 + Math.random() * 0.6),
+    }));
+  }
+  return parts;
+}
+// The explosive (red gem) blast. Reads as a real FIRE explosion — a hot
+// yellow-orange core, an orange fireball bursting out, red-orange embers spraying
+// to the rim, and lingering smoky glow. Deliberately NOT white (and not flat red):
+// `color` is ignored — explosions are fire regardless of the shot's tint.
+export function aoeBlast(x, y, radius = 90, color = "yellow") {
+  var HOT   = { r: 255, g: 232, b: 150 };   // yellow-hot core (not white)
+  var FIRE  = { r: 255, g: 140, b: 40  };   // orange fireball body
+  var EMBER = { r: 255, g: 80,  b: 25  };   // red-orange sparks
+  var parts = [];
+
+  // Core flash — a hot yellow-orange burst snapping outward, cooling to orange.
   for ( var i = 0; i < 4; i++ ) {
     parts.push(new Particle(null, {
-      start: { x, y, radius: 12, r: 255, g: 255, b: 255, alpha: 1 },
-      end:   { x, y, radius: radius * 0.9, alpha: 0 },
+      start: { x, y, radius: 12, ...HOT, alpha: 1 },
+      end:   { x, y, radius: radius * 0.85, ...FIRE, alpha: 0 },
       lifeSpan: 0.22,
     }));
   }
-  // Shockwave ring — coloured sparks spraying to the blast edge.
+  // Fireball body — orange puffs billowing a short way out, cooling to ember.
+  for ( var i = 0; i < 10; i++ ) {
+    var a = Math.random() * Math.PI * 2, d = Math.random() * radius * 0.5;
+    parts.push(new Particle(null, {
+      start: { x, y, radius: 16, ...FIRE, alpha: 0.95 },
+      end:   { x: x + Math.cos(a) * d, y: y + Math.sin(a) * d, radius: 6, ...EMBER, alpha: 0 },
+      lifeSpan: 0.3 + Math.random() * 0.15,
+    }));
+  }
+  // Shockwave embers — sparks spraying to the blast edge, hot → red-orange.
   var n = 18;
   for ( var i = 0; i < n; i++ ) {
     var a = (i / n) * Math.PI * 2 + Math.random() * 0.35;
     parts.push(new Particle(null, {
-      start: { x, y, radius: 8, ...rgb, alpha: 1 },
-      end:   { x: x + Math.cos(a) * radius, y: y + Math.sin(a) * radius, radius: 2, alpha: 0 },
+      start: { x, y, radius: 7, ...HOT, alpha: 1 },
+      end:   { x: x + Math.cos(a) * radius, y: y + Math.sin(a) * radius, radius: 2, ...EMBER, alpha: 0 },
       lifeSpan: 0.35 + Math.random() * 0.15,
     }));
   }
-  // Lingering glow — slower, growing, fading smoke in the blast colour.
+  // Lingering smoke — slower, growing, fading from orange to dark.
   for ( var i = 0; i < 8; i++ ) {
     var a = Math.random() * Math.PI * 2, d = Math.random() * radius * 0.6;
     parts.push(new Particle(null, {
-      start: { x, y, radius: 14, ...rgb, alpha: 0.5 },
-      end:   { x: x + Math.cos(a) * d, y: y + Math.sin(a) * d, radius: 34, alpha: 0 },
+      start: { x, y, radius: 14, ...FIRE, alpha: 0.45 },
+      end:   { x: x + Math.cos(a) * d, y: y + Math.sin(a) * d, radius: 34, r: 90, g: 40, b: 20, alpha: 0 },
       lifeSpan: 0.6 + Math.random() * 0.3,
     }));
   }

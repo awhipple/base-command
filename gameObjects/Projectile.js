@@ -1,9 +1,10 @@
 import GameObject from "../engine/objects/GameObject.js"
-import { getDirectionFrom, slideDirectionTowards } from "../engine/GameMath.js";
+import { getDirectionFrom, slideDirectionTowards, BoundingRect } from "../engine/GameMath.js";
 import DamageText from "./effects/DamageText.js";
 import Laser from "./effects/Laser.js";
 import Particle from "../engine/gfx/shapes/Particle.js";
-import { aoeBlast } from "./effects/Particle Effects.js";
+import { aoeBlast, impactSpark } from "./effects/Particle Effects.js";
+import LaserRing from "./effects/LaserRing.js";
 
 export default class Projectile extends GameObject {
   z = 1;
@@ -37,16 +38,24 @@ export default class Projectile extends GameObject {
 
     this.trail = options.trail;
 
+    // Per-tier visual scaling (set by Item.shoot; defaults = no change). Affects
+    // only the drawn size/brightness/trail, never the hitbox.
+    this.drawScale = options.drawScale ?? 1;
+    this.drawAlpha = options.drawAlpha ?? 1;
+    this.trailScale = options.trailScale ?? 1;
+
     this.img = options.image;
 
     this.options = options;
 
     this.onCollision(target => {
+      if ( target.intangible ) return;   // phased-out enemy (Phaser) → shot passes through
       this.hit = true;
       if ( options.aoe ) {
         this._explode();
       } else {
         this._dealDamage(target, this.damage, { x: this.x, y: this.y });
+        this.engine.register(impactSpark(this.x, this.y, this.color, "bullet"));
       }
       this.engine.unregister(this);
     }, "enemy");
@@ -66,6 +75,7 @@ export default class Projectile extends GameObject {
     var radius = this.options.aoeRadius ?? 80;
     var r2 = radius * radius;
     this.engine.getObjects("enemy").forEach(e => {
+      if ( e.intangible ) return;          // phased-out enemy is immune to the blast
       var d2 = this.pos.squaredDistanceTo(e.pos);
       if ( d2 <= r2 ) {
         var t = Math.sqrt(d2) / radius;   // 0 at centre, 1 at the rim
@@ -73,7 +83,13 @@ export default class Projectile extends GameObject {
         this._dealDamage(e, dmg, { x: e.x, y: e.y });
       }
     });
-    this.engine.register(aoeBlast(this.x, this.y, radius, this.color));
+    // Laser + explosive reads as a fast expanding ring of beam; other weapons
+    // get the particle blast.
+    if ( this.laser ) {
+      this.engine.register(new LaserRing(this.engine, this.x, this.y, radius, this.color));
+    } else {
+      this.engine.register(aoeBlast(this.x, this.y, radius, this.color));
+    }
     this.engine.sounds.play("explosion", { volume: 0.35 });
   }
 
@@ -92,67 +108,124 @@ export default class Projectile extends GameObject {
     this.engine.register(new DamageText(this.engine, dmg, point.x, point.y));
   }
 
-  // Instant hit-scan beam. Straight by default; when homing (blue gem) it arcs
-  // toward the nearest enemy, but only up to LASER_MAX_ARC — too wide an aim
-  // bends toward the target and misses.
+  // Instant hit-scan beam. Straight by default; the homing (blue) variant marches
+  // and curves toward enemies — see _fireHomingLaser.
   _fireLaser(x, y, dir) {
     this.hide = true;
     var enemies = this.engine.getObjects("enemy");
-    var target = null, end = null, control = null;
 
     if ( this.homing ) {
-      var nearest = null, nd = Infinity;
-      enemies.forEach(e => {
-        var d = this.pos.squaredDistanceTo(e.pos);
-        if ( d < nd ) { nd = d; nearest = e; }
-      });
-      var maxArc = this.options.laserArc ?? Projectile.LASER_MAX_ARC;
-      if ( nearest ) {
-        var toTarget = getDirectionFrom({ x, y }, nearest.pos);
-        var delta = Math.atan2(Math.sin(toTarget - dir), Math.cos(toTarget - dir));
-        var reach = Math.min(Math.sqrt(nd), Projectile.LASER_RANGE);
-        if ( Math.abs(delta) <= maxArc ) {
-          target = nearest;
-          end = { x: nearest.x, y: nearest.y };
-        } else {
-          var bent = dir + Math.sign(delta) * maxArc;
-          end = { x: x + Math.cos(bent) * reach, y: y + Math.sin(bent) * reach };
-        }
-        // Control point along the aim direction => beam leaves straight then
-        // curves to the endpoint, reading as an arc through the air.
-        var span = Math.hypot(end.x - x, end.y - y);
-        control = { x: x + Math.cos(dir) * span * 0.6, y: y + Math.sin(dir) * span * 0.6 };
-      }
-    } else {
-      var point = null;
-      enemies.forEach(e => {
-        var inter = e.lineIntercept(x, y, dir);
-        if ( inter && (!point || inter.y > point.y) ) { point = inter; target = e; }
-      });
-      if ( point ) {
-        end = point;
-      } else {
-        target = null;
-      }
+      this._fireHomingLaser(x, y, dir, enemies);
+      return;
     }
 
-    end = end ?? { x: x + Math.cos(dir) * Projectile.LASER_RANGE, y: y + Math.sin(dir) * Projectile.LASER_RANGE };
+    // Straight beam: hit the first enemy along the ray (closest to the base) at
+    // its hitbox edge.
+    var target = null, point = null;
+    enemies.forEach(e => {
+      if ( e.intangible ) return;
+      var inter = e.lineIntercept(x, y, dir);
+      if ( inter && (!point || inter.y > point.y) ) { point = inter; target = e; }
+    });
+    var end = point ?? { x: x + Math.cos(dir) * Projectile.LASER_RANGE, y: y + Math.sin(dir) * Projectile.LASER_RANGE };
 
     this.engine.register(new Laser(this.engine, {
       x1: x, y1: y, x2: end.x, y2: end.y,
-      control,
       color: this.color,
+      widthScale: this.options.widthScale,   // tier → thicker beam
+      glow: this.options.glowBoost,           // tier → brighter wide aura
     }));
 
     if ( this.options.aoe ) {
-      // Explosive effect on a laser: blast at the beam's end point.
       this.x = end.x; this.y = end.y;
       this.hit = true;
       this._explode();
     } else if ( target ) {
       this.hit = true;
       this._dealDamage(target, this.damage, end);
+      this.engine.register(impactSpark(end.x, end.y, this.color, "laser"));
     }
+  }
+
+  // Homing (blue) laser: a SINGLE-TARGET beam that marches outward, gently
+  // steering toward the nearest enemy AHEAD of it (so it follows your aim), and
+  // TERMINATES at the first hitbox it enters — dealing damage to just that one
+  // enemy, even if the beam only clipped it by accident.
+  _fireHomingLaser(x, y, dir, enemies) {
+    var march = this._marchHomingBeam(x, y, dir, enemies);
+
+    this.engine.register(new Laser(this.engine, {
+      points: march.points,
+      color: this.color,
+      widthScale: this.options.widthScale,
+      glow: this.options.glowBoost,
+    }));
+
+    if ( march.hit ) {
+      this.hit = true;
+      this._dealDamage(march.hit.enemy, this.damage, march.hit.point);
+      this.engine.register(impactSpark(march.hit.point.x, march.hit.point.y, this.color, "laser"));
+    }
+  }
+
+  // March a homing beam in small steps: steer toward the nearest enemy within a
+  // FORWARD cone (homing assists your aim, doesn't yank toward a closer enemy off
+  // to the side/behind), and STOP at the first enemy whose hitbox a step enters.
+  // Returns { points, hit } — the polyline to draw and the single contact (or null).
+  _marchHomingBeam(x, y, dir, enemies) {
+    var STEP = 7;                                               // px per step
+    var MAX = Math.ceil(Projectile.LASER_RANGE / STEP);
+    var turn = (this.options.homingTurn ?? 0.02) * (STEP / 5);  // rad/step (≈ projectile feel)
+    var CONE = Math.PI / 2;                                      // only home toward enemies ahead
+    var W = this.engine.window.width, H = this.engine.window.height;
+
+    var heading = dir, px = x, py = y;
+    var points = [{ x: px, y: py }];
+    var hit = null;
+
+    for ( var i = 0; i < MAX; i++ ) {
+      // Steer toward the nearest enemy AHEAD (within the forward cone of the
+      // current heading) — an enemy off to the side or behind doesn't pull it.
+      var nearest = null, nd = Infinity;
+      for ( var a = 0; a < enemies.length; a++ ) {
+        var ea = enemies[a];
+        if ( ea.intangible ) continue;
+        var toE = Math.atan2(ea.y - py, ea.x - px);
+        var off = Math.abs(Math.atan2(Math.sin(toE - heading), Math.cos(toE - heading)));
+        if ( off > CONE ) continue;
+        var ex = ea.x - px, ey = ea.y - py, d2 = ex * ex + ey * ey;
+        if ( d2 < nd ) { nd = d2; nearest = ea; }
+      }
+      if ( nearest ) {
+        var desired = Math.atan2(nearest.y - py, nearest.x - px);
+        var dd = Math.atan2(Math.sin(desired - heading), Math.cos(desired - heading));
+        heading += Math.max(-turn, Math.min(turn, dd));
+      }
+
+      var nx = px + Math.cos(heading) * STEP, ny = py + Math.sin(heading) * STEP;
+
+      // Terminate at the first enemy this step enters (any enemy, even one we
+      // weren't homing on) — single target, at the hitbox edge.
+      var struck = null;
+      for ( var b = 0; b < enemies.length; b++ ) {
+        var eb = enemies[b];
+        if ( eb.intangible ) continue;
+        if ( eb.rect.contains(nx, ny) ) { struck = eb; break; }
+      }
+      if ( struck ) {
+        var segDir = Math.atan2(ny - py, nx - px);
+        var edge = struck.lineIntercept(px, py, segDir) ?? { x: nx, y: ny };
+        points.push({ x: edge.x, y: edge.y });
+        hit = { enemy: struck, point: edge };
+        break;
+      }
+
+      px = nx; py = ny;
+      points.push({ x: px, y: py });
+      if ( px < -50 || px > W + 50 || py < -50 || py > H + 50 ) break;
+    }
+
+    return { points: points, hit: hit };
   }
 
   update() {
@@ -186,6 +259,7 @@ export default class Projectile extends GameObject {
         }
         var closest = null;
         this.engine.getObjects("enemy").forEach(enemy => {
+          if ( enemy.intangible ) return;
           if ( closest === null || this.pos.squaredDistanceTo(enemy.pos) < closest) {
             closest = this.pos.squaredDistanceTo(enemy.pos);
             this.target = enemy;
@@ -207,17 +281,19 @@ export default class Projectile extends GameObject {
       this.nextTrail -= 1/60;
       if ( this.nextTrail <= 0 ) {
         this.nextTrail += 1/30;
+        var tcfg = Projectile.TRAIL[this.trail];
+        var baseR = (tcfg.radius ?? 17) * this.trailScale;   // tier swells the trail
         this.engine.register(new Particle(
           this.engine,
           {
             start: {
               x: this.x, y: this.y,
-              radius: 17,
+              r: tcfg.r, g: tcfg.g, b: tcfg.b,
+              radius: baseR,
               alpha: 0.6,
-              ...Projectile.TRAIL[this.trail],
             },
             end: {
-              radius: 5,
+              radius: baseR * 0.3,
               alpha: 0,
             },
             lifeSpan: 0.5,
@@ -233,7 +309,32 @@ export default class Projectile extends GameObject {
       this.sprite.x = this.x;
       this.sprite.y = this.y;
     }
-    this.img?.draw(ctx, this.rect.grow(this.scaleDown ? 0 : 15));
+    if ( this.img ) {
+      // Base draw size: stinger ≈ rect (20px), ball ≈ rect grown by 15/side (50px);
+      // tier scales it (and the alpha) around the projectile centre.
+      var base = this.scaleDown ? this.rect.w : this.rect.w + 30;
+      var size = base * this.drawScale;
+      this.img.draw(ctx, new BoundingRect(this.x - size / 2, this.y - size / 2, size, size), { alpha: this.drawAlpha });
+    }
+
+    // Ball weapons: a crisp, bright core on top of the soft body so the head
+    // reads as a distinct ball (white-hot centre → vivid colour) with a soft
+    // trail behind it — instead of blending into the trail as a moving line.
+    if ( !this.laser && !this.scaleDown ) {
+      var rgb = Projectile.TRAIL[this.color] ?? Projectile.TRAIL.white;
+      var coreR = (this.rect.w + 30) * this.drawScale * 0.33;
+      var a = this.drawAlpha;
+      var grad = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, coreR);
+      grad.addColorStop(0,    "rgba(255,255,255," + (0.95 * a) + ")");
+      grad.addColorStop(0.45, "rgba(" + rgb.r + "," + rgb.g + "," + rgb.b + "," + (0.95 * a) + ")");
+      grad.addColorStop(1,    "rgba(" + rgb.r + "," + rgb.g + "," + rgb.b + ",0)");
+      ctx.save();
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, coreR, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
   }
 
   get dir() {

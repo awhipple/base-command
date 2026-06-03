@@ -1,12 +1,13 @@
 import GameObject from "../engine/objects/GameObject.js";
-import Sprite from "../engine/gfx/Sprite.js";
 import { getDirectionFrom, slideDirectionTowards, Coord } from "../engine/GameMath.js";
+import { drawTurret, weaponTypeOf, effectColorOf, TURRET } from "./TurretSprite.js";
 
-// A small side turret. Takes a weapon gem AND its own effect gem, auto-aims at
-// the nearest enemy, and fires at half the main base's fire rate for half damage
-// — so each helper is ~25% of your output, both together ~50%. Equipped via the
-// `left`+`leftEffect` / `right`+`rightEffect` equipment slots (slot = the weapon
-// key; `slot+"Effect"` = its effect); both use the shared tinted `base-helper`.
+// A small side turret — a half-scale "mini-you". Takes a weapon gem AND its own
+// effect gem, auto-aims at the nearest enemy, and fires at half the main base's
+// fire rate for half damage — so each helper is ~25% of your output, both
+// together ~50%. Equipped via the `left`+`leftEffect` / `right`+`rightEffect`
+// slots (slot = the weapon key; `slot+"Effect"` = its effect). Drawn with the
+// shared procedural turret (TurretSprite) at TURRET_SCALE with a cyan tint.
 export default class Helper extends GameObject {
   static FIRE_MULT = 0.5;   // half fire rate
   static DAMAGE_MULT = 0.5; // half damage
@@ -17,24 +18,33 @@ export default class Helper extends GameObject {
   // full rotation every ~10s — deliberately slow so you watch them creep around.
   static TURN_RATE = 0.01;
 
+  // The hand-rolled turret renders helpers as half-scale "mini-yous". All firing
+  // geometry (muzzle distance + stinger spread) is derived from this so helper
+  // shots leave the drawn barrels exactly.
+  static TURRET_SCALE = 0.5;
+  static TINT = "#35c9d6";
+
   z = 5;
   firePos = new Coord(0, 0);
+  aim = 3 * Math.PI / 2;   // point up until it sees a target
+  flash = 0;
+  flashSide = 1;
+  life = 0;
 
-  constructor(engine, slot, x, y, scale = 0.38) {
+  constructor(engine, slot, x, y) {
     super(engine, { w: 100, h: 150 });
     this.slot = slot;        // "left" | "right" — which equipment slot it draws from
     this.x = x;
     this.y = y;
-    this.scale = scale;
 
     this.fireIn = 1 / engine.globals.stats.speed.val;
-    this.sprite = new Sprite(engine.images.get("base-helper").img, this.x, this.y, scale);
-    this.sprite.rad = 3 * Math.PI / 2; // point up until it sees a target
-
     this.equip = engine.globals.inventory.equipment;
   }
 
   update() {
+    this.life++;
+    this.flash *= 0.8;   // muzzle flash decays each tick
+
     // Only active while the main base is (same level/win gating). With no gem in
     // this helper's slot the turret doesn't exist at all (see draw()).
     var weapon = this.equip[this.slot];
@@ -54,10 +64,11 @@ export default class Helper extends GameObject {
         };
       }
       // Swing smoothly toward the (led) aim point rather than snapping.
-      this.sprite.rad = slideDirectionTowards(this.sprite.rad, getDirectionFrom(this.pos, aim), Helper.TURN_RATE);
+      this.aim = slideDirectionTowards(this.aim, getDirectionFrom(this.pos, aim), Helper.TURN_RATE);
     }
-    this.firePos.x = this.x + Math.cos(this.sprite.rad) * 90 * this.scale;
-    this.firePos.y = this.y + Math.sin(this.sprite.rad) * 90 * this.scale;
+    var reach = TURRET.reach(Helper.TURRET_SCALE);
+    this.firePos.x = this.x + Math.cos(this.aim) * reach;
+    this.firePos.y = this.y + Math.sin(this.aim) * reach;
 
     // No weapon, or nothing to shoot at -> hold fire (don't bank up shots).
     if ( !weapon || !target ) return;
@@ -66,11 +77,16 @@ export default class Helper extends GameObject {
     if ( this.fireIn < 0 ) {
       this.fireIn += 1 / (this.engine.globals.stats.speed.val * weapon.projectile.speed * Helper.FIRE_MULT);
       setTimeout(() => {
-        weapon.shoot(this.firePos.x, this.firePos.y, this.sprite.rad, {
+        weapon.shoot(this.firePos.x, this.firePos.y, this.aim, {
           // Each helper has its OWN effect slot ("<slot>Effect"); null = no effect.
           effectGem: this.equip[this.slot + "Effect"] ?? null,
           damageScale: Helper.DAMAGE_MULT,
+          // Scaled stinger spread so the two shots leave this mini-turret's drawn
+          // side barrels (not the full-size ±13).
+          spread: TURRET.side(Helper.TURRET_SCALE),
         });
+        this.flash = 1;
+        this.flashSide = weapon.alt ? -1 : 1;
       }, 100);
     }
   }
@@ -87,6 +103,14 @@ export default class Helper extends GameObject {
   draw(ctx) {
     // No gem equipped -> the helper turret isn't present on the battlefield.
     if ( !this.equip[this.slot] ) return;
-    this.sprite.draw(ctx);
+
+    drawTurret(ctx, {
+      x: this.x, y: this.y, aim: this.aim,
+      scale: Helper.TURRET_SCALE,
+      weapon: weaponTypeOf(this.equip[this.slot]),
+      effectColor: effectColorOf(this.equip[this.slot + "Effect"]),
+      tint: Helper.TINT,
+      flash: this.flash, flashSide: this.flashSide, phase: this.life / 60,
+    });
   }
 }

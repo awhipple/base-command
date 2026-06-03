@@ -34,7 +34,7 @@ class DangerButton extends Button {
 export default class SettingsScreen extends UIWindow {
   constructor(engine, opts = {}) {
     var w = Math.min(480, engine.window.width - 40);
-    var h = opts.dev ? 430 : 360;
+    var h = opts.dev ? 500 : 360;
     var armed = { state: false };
 
     var components = [
@@ -65,17 +65,28 @@ export default class SettingsScreen extends UIWindow {
       },
     ];
 
-    // Dev-only Cheat button: grants a batch of test gems each click (repeatable).
+    // Dev-only cheat buttons (repeatable): a row of energy cells, or one of every
+    // gem colour+tier.
     if ( opts.dev ) {
       components.push({ type: "spacer", height: 16 });
       components.push({
         type: "button",
-        text: { button: "Cheat: +test gems" },
+        text: { button: "Cheat: Energy" },
         fontColor: "#eaffea",
         borderColor: "#7ee787",
         fontSize: 20,
         center: true,
-        callback: () => opts.onCheat?.(),
+        callback: () => opts.onCheatEnergy?.(),
+      });
+      components.push({ type: "spacer", height: 10 });
+      components.push({
+        type: "button",
+        text: { button: "Cheat: Gems" },
+        fontColor: "#eafaff",
+        borderColor: "#7dd3fc",
+        fontSize: 20,
+        center: true,
+        callback: () => opts.onCheatGems?.(),
       });
     }
 

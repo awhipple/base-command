@@ -29,6 +29,10 @@ export default class FlyingGem extends GameObject {
     this.duration = opts.duration ?? 0.5;   // seconds, fixed (keys the reveal)
     this.size = opts.size ?? 34;
     this.onLand = opts.onLand;
+    // fadeOut: dissolve over the last stretch instead of landing crisply — used
+    // when the destination slot is scrolled off-screen, so there's nothing to
+    // reveal; the gem just whooshes up into the grid and fades.
+    this.fadeOut = opts.fadeOut ?? false;
 
     // Spawn sparkle (particle engine = colour dots, exactly its strength).
     var c = SPARK_RGB[opts.color] ?? SPARK_RGB.white;
@@ -62,6 +66,13 @@ export default class FlyingGem extends GameObject {
   draw(ctx) {
     // Slight scale pop mid-flight, settling to normal size on arrival.
     var s = this.size * (1 + 0.2 * Math.sin(Math.min(this.t, 1) * Math.PI));
-    this.icon.draw(ctx, this.x - s / 2, this.y - s / 2, s, s);
+    if ( this.fadeOut ) {
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, Math.min(1, (1 - this.t) / 0.45));   // fade over the last ~45%
+      this.icon.draw(ctx, this.x - s / 2, this.y - s / 2, s, s);
+      ctx.restore();
+    } else {
+      this.icon.draw(ctx, this.x - s / 2, this.y - s / 2, s, s);
+    }
   }
 }

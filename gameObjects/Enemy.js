@@ -6,13 +6,14 @@ import DamageText from "./effects/DamageText.js";
 import Particle from "../engine/gfx/shapes/Particle.js";
 import { deathBurst } from "./effects/Particle Effects.js";
 
-const ENEMY_PALETTE = {
+export const ENEMY_PALETTE = {
   white:  { glow: "#e8eef5", bright: "#ffffff", core: "#cdd9e6", edge: "#5e6878" },
   red:    { glow: "#ff5050", bright: "#ffc0c0", core: "#e23434", edge: "#5a0d0d" },
   green:  { glow: "#4dff88", bright: "#b6ffd0", core: "#34c46e", edge: "#0d4a2a" },
   blue:   { glow: "#5aaaff", bright: "#b6dcff", core: "#3076c9", edge: "#10314f" },
   purple: { glow: "#b266ff", bright: "#dec0ff", core: "#8a4ad6", edge: "#3a1359" },
   yellow: { glow: "#ffd84d", bright: "#fff0a8", core: "#e6b800", edge: "#5a4400" },
+  orange: { glow: "#ff9a3c", bright: "#ffe2b0", core: "#ff7b1a", edge: "#5a2a00" },
 };
 
 export default class Enemy extends GameObject {
@@ -60,6 +61,7 @@ export default class Enemy extends GameObject {
       if ( type.chain > 0 ) {
         var closestEnemy, closestDist;
         this.engine.getObjects("enemy").forEach(enemy => {
+          if ( enemy.intangible ) return;   // chain skips a phased-out enemy
           var sqDist = this.pos.squaredDistanceTo(enemy.pos);
           if ( type.hit.indexOf(enemy) === -1 && (!closestEnemy || sqDist < closestDist) ) {
             closestDist = sqDist;
