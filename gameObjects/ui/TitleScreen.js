@@ -1,5 +1,4 @@
 import UIWindow from "../../engine/gfx/ui/window/index.js";
-import Upgrade from "./Upgrade.js";
 import { UIComponent } from "../../engine/gfx/ui/window/UIComponent.js";
 import { BoundingRect } from "../../engine/GameMath.js";
 import Item from "../Item.js";
@@ -36,44 +35,16 @@ class PrimaryButton extends Button {
   }
 }
 
-function makeUpgradeUI(engine, name, stat) {
-  return {
-    type: Upgrade,
-    text: {
-      button: "+",
-      name: name,
-      lvl: () => "lvl " + stat.lvl,
-      cost: () => "Cost: " + stat.cost(stat.lvl),
-      stat: () => stat.val + " -> " + stat.next(stat.lvl),
-    },
-    callback: () => {
-      if ( engine.globals.cash >= stat.cost(stat.lvl) ) {
-        stat.val = stat.next(stat.lvl);
-        engine.globals.cash -= stat.cost(stat.lvl);
-        stat.lvl++;
-        engine.trigger("saveRequested");
-      }
-    },
-    left: 130,
-    fontColor: "#0f0",
-  };
-}
-
 export default class TitleScreen extends UIWindow {
   constructor(engine) {
-    var stats = engine.globals.stats;
     var levels = engine.globals.levels;
     var rewardText = () => {
-      var rewardText = "Reward: ";
-      if ( levels.current.reward ) {
-        rewardText += "   ";
-        if ( levels.current.reward && (levels.current.qty ?? 0) === 0 && (levels.current.chance ?? 100) !== 100) {
-          rewardText += "(" + levels.current.chance + "%)";
-        }
-        rewardText += " + ";
+      // The reward is an hourglass (icon drawn beside this by LevelSelect).
+      var t = "Reward: ";
+      if ( levels.current.reward && (levels.current.qty ?? 0) === 0 && (levels.current.chance ?? 100) !== 100 ) {
+        t += "(" + levels.current.chance + "%) ";
       }
-      rewardText += "$" + levels.current.cash;
-      return rewardText;
+      return t;
     }
     super(engine, {
       x: 0, y: 0,
@@ -91,24 +62,7 @@ export default class TitleScreen extends UIWindow {
       },
       {
         type: "spacer",
-        height: 80,
-      },
-      {
-        type: "title",
-        text: () => "$" + engine.globals.cash,
-        fontSize: 35,
-        fontColor: "#ffd84d",
-        center: true,
-      },
-      {
-        type: "spacer",
-        height: 20,
-      },
-      makeUpgradeUI(engine, "Power", stats.power),
-      makeUpgradeUI(engine, "Speed", stats.speed),
-      {
-        type: "spacer",
-        height: 60,
+        height: 100,
       },
       {
         type: LevelSelect,
@@ -144,22 +98,34 @@ export default class TitleScreen extends UIWindow {
 
   draw(ctx) {
     super.draw(ctx);
-    var gx = this.gearRect.x + this.gearRect.w / 2;
-    var gy = this.gearRect.y + this.gearRect.h / 2;
+    var r = this.gearRect;
+    var gx = r.x + r.w / 2, gy = r.y + r.h / 2;
     ctx.save();
-    ctx.fillStyle = this.gearHover ? "#cfd6e2" : "#5a6b8a";
-    ctx.font = "26px Lucida Console, Menlo, monospace";
+    // The whole rect is a button — draw a rounded background so the entire area
+    // (including the gear's centre hole) reads and behaves as one clickable button.
+    roundedRectPath(ctx, r.x, r.y, r.w, r.h, 8);
+    ctx.fillStyle = this.gearHover ? "#1c2a44" : "#121a2c";
+    ctx.fill();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = this.gearHover ? "#7ee787" : "#3a4a6a";
+    ctx.stroke();
+    ctx.fillStyle = this.gearHover ? "#eaffea" : "#9aa7c2";
+    ctx.font = "24px Lucida Console, Menlo, monospace";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText("⚙", gx, gy + 1);
     ctx.restore();
   }
 
+  update() {
+    super.update();
+    // Re-assert the pointer every frame while hovering (the engine clears the
+    // cursor each frame, so setting it only on mousemove reverts when stationary).
+    if ( this.gearHover ) this.engine.cursor = "pointer";
+  }
+
   onMouseMove(event) {
     this.gearHover = !this.hide && this.gearRect.contains(event.pos);
-    if ( this.gearHover ) {
-      this.engine.cursor = "pointer";
-    }
     super.onMouseMove(event);
   }
 
@@ -178,7 +144,11 @@ class LevelSelect extends UIComponent {
   initialize() {
     super.initialize();
 
-    this.iconRect = new BoundingRect(160, 42, 44, 44);
+    // Shift the whole info row (enemy icon + enemy/reward text + reward icon)
+    // right so it reads centred between the level-select arrows — the enemy icon
+    // otherwise weights it to the left. Tunable; eyeball after layout changes.
+    var infoShift = 38;
+    this.iconRect = new BoundingRect(160 + infoShift, 42, 44, 44);
 
     this.levelText = this.options.textObj.level;
     this.levelText.x = this.suggestedWidth/2;
@@ -199,25 +169,37 @@ class LevelSelect extends UIComponent {
     );
 
     this.enemiesText = this.options.textObj.enemies;
-    this.enemiesText.x = 220;
+    this.enemiesText.x = 220 + infoShift;
     this.enemiesText.y = 40;
     this.enemiesText.fontColor = "white";
     this.enemiesText.fontSize = 15;
-    
+
     this.rewardText = this.options.textObj.reward;
-    this.rewardText.x = 220;
+    this.rewardText.x = 220 + infoShift;
     this.rewardText.y = 70;
     this.rewardText.fontColor = "white";
     this.rewardText.fontSize = 15;
 
     this.levels = this.options.levels;
-    this.rewardRect = new BoundingRect(290, 65, 25, 25);
+    this.rewardRect = new BoundingRect(290 + infoShift, 65, 25, 25);
   }
 
   onMouseMove(event) {
     this.leftHover = this.leftArrowRect.contains(event.pos);
     this.rightHover = this.rightArrowRect.contains(event.pos);
     this.hover = this.leftHover || this.rightHover;
+
+    // Hover the reward hourglass icon → show its tooltip (fuel/s + duration come
+    // from the hourglass's own description). Cache the Item per reward name.
+    var rewardName = this.levels.current.reward;
+    if ( rewardName && this.rewardRect.contains(event.pos) ) {
+      if ( !this._rewardItem || this._rewardItem.name !== rewardName ) {
+        this._rewardItem = new Item(this.engine, rewardName);
+      }
+      this.engine.globals.toolTipItem = this._rewardItem;
+    } else if ( this.engine.globals.toolTipItem === this._rewardItem ) {
+      this.engine.globals.toolTipItem = null;   // only clear our own tooltip
+    }
   }
 
   onMouseClick() {
@@ -237,6 +219,9 @@ class LevelSelect extends UIComponent {
 
   hide() {
     this.hover = false;
+    if ( this.engine.globals.toolTipItem === this._rewardItem ) {
+      this.engine.globals.toolTipItem = null;
+    }
   }
 
   _drawChevron(rect, dir, hover) {

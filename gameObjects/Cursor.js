@@ -15,6 +15,7 @@ export default class Cursor extends GameObject {
       if (this.engine.globals.dragItem) {
         this.engine.trigger("stopDragItem", this.engine.globals.dragItem);
         this.engine.globals.dragItem = null;
+        this.engine.globals.dragSource = null;
       }
     })
   }

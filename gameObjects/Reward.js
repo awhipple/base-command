@@ -4,9 +4,9 @@ import { BoundingRect } from "../engine/GameMath.js";
 
 export default class Reward extends GameObject {
   z = 110;
-  time = 3.5;
+  time = 1.1;          // total lifetime — snappy; brief pulse then quick slide out
   alpha = 0;
-  pulseRate = 0.3;
+  pulseRate = 0.3;     // pulse-ring cadence
   nextPulse = 0;
   pulses = [];
 
@@ -32,9 +32,9 @@ export default class Reward extends GameObject {
 
     this.time -= 1/60;
 
-    if ( this.time < 1.5 ) {
+    if ( this.time < 0.6 ) {   // brief pulse in place, then slide out quickly
       this.xv = this.xv ?? 0;
-      this.xv += 0.15;
+      this.xv += 0.32;
       this.x += this.xv;
     }
 

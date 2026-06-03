@@ -34,14 +34,10 @@ class DangerButton extends Button {
 export default class SettingsScreen extends UIWindow {
   constructor(engine, opts = {}) {
     var w = Math.min(480, engine.window.width - 40);
-    var h = 360;
+    var h = opts.dev ? 430 : 360;
     var armed = { state: false };
 
-    super(engine, {
-      x: engine.window.width / 2 - w / 2,
-      y: engine.window.height / 2 - h / 2,
-      w: w, h: h,
-    }, [
+    var components = [
       { type: "spacer", height: 10 },
       {
         type: Banner,
@@ -55,6 +51,7 @@ export default class SettingsScreen extends UIWindow {
         type: DangerButton,
         text: { button: "Reset save data" },
         fontColor: "#ffd6d6",
+        fontSize: 20,
         center: true,
         armedFn: () => armed.state,
         callback: () => {
@@ -66,16 +63,38 @@ export default class SettingsScreen extends UIWindow {
           }
         },
       },
-      { type: "spacer", height: 20 },
-      {
+    ];
+
+    // Dev-only Cheat button: grants a batch of test gems each click (repeatable).
+    if ( opts.dev ) {
+      components.push({ type: "spacer", height: 16 });
+      components.push({
         type: "button",
-        text: { button: "Close" },
-        fontColor: "#cfd6e2",
-        borderColor: "#3a4a6a",
+        text: { button: "Cheat: +test gems" },
+        fontColor: "#eaffea",
+        borderColor: "#7ee787",
+        fontSize: 20,
         center: true,
-        callback: () => engine.trigger("closeSettings"),
-      },
-    ], {
+        callback: () => opts.onCheat?.(),
+      });
+    }
+
+    components.push({ type: "spacer", height: 20 });
+    components.push({
+      type: "button",
+      text: { button: "Close" },
+      fontColor: "#cfd6e2",
+      borderColor: "#3a4a6a",
+      fontSize: 20,
+      center: true,
+      callback: () => engine.trigger("closeSettings"),
+    });
+
+    super(engine, {
+      x: engine.window.width / 2 - w / 2,
+      y: engine.window.height / 2 - h / 2,
+      w: w, h: h,
+    }, components, {
       bgColor: "#0a0f1a",
       borderColor: "#2a3a5a",
       outerPadding: 6,

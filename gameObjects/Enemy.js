@@ -1,10 +1,10 @@
 import GameObject from "../engine/objects/GameObject.js";
 import { getDirectionFrom } from "../engine/GameMath.js";
 import Text from "../engine/gfx/Text.js";
-import Cash from "./Cash.js";
 import Lightning from "../engine/gfx/effects/Lightning.js";
 import DamageText from "./effects/DamageText.js";
 import Particle from "../engine/gfx/shapes/Particle.js";
+import { deathBurst } from "./effects/Particle Effects.js";
 
 const ENEMY_PALETTE = {
   white:  { glow: "#e8eef5", bright: "#ffffff", core: "#cdd9e6", edge: "#5e6878" },
@@ -29,24 +29,25 @@ export default class Enemy extends GameObject {
       this.dir = getDirectionFrom(this.pos, engine.globals.base.pos);
     }
 
-    this.hp = this.cash = this.maxHp = hp;
+    this.hp = this.maxHp = hp;
   }
 
   damage(dmg, type) {
     this.hp -= dmg;
     if ( this.hp <= 0 ) {
       if ( this.type === "red" ) {
-        this.engine.register(new Enemy(this.engine, this.x, this.y, Math.floor(this.cash/2), "white", -10), "enemy");
-        this.engine.register(new Enemy(this.engine, this.x, this.y, Math.floor(this.cash/2), "white", 10), "enemy");
+        this.engine.register(new Enemy(this.engine, this.x, this.y, Math.floor(this.maxHp/2), "white", -10), "enemy");
+        this.engine.register(new Enemy(this.engine, this.x, this.y, Math.floor(this.maxHp/2), "white", 10), "enemy");
       }
 
-      this._createCash();
-      
       if ( this.constructor.name === "Boss" ) {
         this.engine.unregister(this);
         this.engine.register(this);
         this.startExplode();
       } else {
+        // Debris burst in the enemy's colour so deaths read as a little explosion.
+        var palette = ENEMY_PALETTE[this.type] || ENEMY_PALETTE.white;
+        this.engine.register(deathBurst(this.x, this.y, palette.glow));
         this.engine.sounds.play("spark");
         this.engine.unregister(this);
       }
@@ -192,29 +193,5 @@ export default class Enemy extends GameObject {
     this._dir = val;
     this.xv = Math.cos(this.dir);
     this.yv = Math.sin(this.dir);
-  }
-
-  _createCash() {
-    var color = "purple", amount = 500;
-    while ( this.cash > 0 ) {
-      if ( this.cash < 500 ) {
-        color = "yellow";
-        amount = 100;
-      }
-      if ( this.cash < 100 ) {
-        color = "red";
-        amount = 25;
-      }
-      if ( this.cash < 25 ) {
-        color = "blue";
-        amount = 5;
-      }
-      if ( this.cash < 5 ) {
-        color = "green";
-        amount = 1;
-      }
-      this.engine.register(new Cash(this.engine, this.x, this.y, amount, color), "cash");
-      this.cash -= amount;
-    }
   }
 }

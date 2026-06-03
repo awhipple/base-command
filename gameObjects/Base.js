@@ -5,8 +5,6 @@ import Item from "./Item.js";
 import Circle from "../engine/gfx/shapes/Circle.js";
 
 export default class Base extends GameObject {
-  static ZAP_SOUNDS = ["lightning", "zap"];
-
   z = 5;
   firePos = new Coord(0, 0);
   on = false;
@@ -32,16 +30,19 @@ export default class Base extends GameObject {
   }
 
   update() {
+    // With no gem equipped, fall back to the basic shot (tiny, 1 dmg, short range)
+    // so level 1 is beatable from a cold start.
     var weapon = this.equip.primary ?? Item.NONE;
     this.fireIn -= 1/60;
     if ( this.fireIn < 0 ) {
       this.fireIn += 1/(this.engine.globals.stats.speed.val * weapon.projectile.speed);
 
-      if ( !Base.ZAP_SOUNDS.includes(weapon.name) ) {
-        this.engine.sounds.play("shot", {volume: 0.5});
+      var isLaser = weapon.projectile.laser;
+      if ( !isLaser ) {
+        this.engine.sounds.play("shot", {volume: 0.12});
       }
       setTimeout(() => {
-        if ( weapon.shoot(this.firePos.x, this.firePos.y, this.sprite.rad) && Base.ZAP_SOUNDS.includes(weapon.name)) {
+        if ( weapon.shoot(this.firePos.x, this.firePos.y, this.sprite.rad) && isLaser ) {
           this.engine.sounds.play("zap", {volume: 0.25});
         }
       }, 150);

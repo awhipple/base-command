@@ -1,5 +1,6 @@
 import GameEngine from "./engine/GameEngine.js";
 import Base from "./gameObjects/Base.js";
+import Helper from "./gameObjects/Helper.js";
 import Spawner from "./gameObjects/Spawner.js";
 import GameUI from "./gameObjects/ui/GameUI.js";
 import TitleScreen from "./gameObjects/ui/TitleScreen.js";
@@ -12,7 +13,6 @@ import Cursor from "./gameObjects/Cursor.js";
 import Reward from "./gameObjects/Reward.js";
 import Circle from "./engine/gfx/shapes/Circle.js";
 import Item from "./gameObjects/Item.js";
-import Text from "./engine/gfx/Text.js";
 import ToolTip from "./gameObjects/ui/ToolTip.js";
 import Lightning from "./engine/gfx/effects/Lightning.js";
 import Image from "./engine/gfx/Image.js";
@@ -37,7 +37,7 @@ export default class Game {
   start() {
     this.engine.images.preload([
       "base", "dragon-green",
-      "white-gems", "blue-gems", "yellow-gems", "purple-gems"
+      "white-gems", "red-gems", "blue-gems", "yellow-gems", "purple-gems"
     ]);
     this.engine.sounds.preload([
       "shot", "spark", "explosion", "chime", "zap", "fireball",
@@ -51,35 +51,29 @@ export default class Game {
       this.engine.images.save(this.generateRapidIcon(color), color + "-rapid-icon");
     });
 
-    [ 
+    // Hourglass icons (one per tier), frame tinted to read the tier at a glance.
+    ["#c98a3a", "#cfd6df", "#f0c060", "#7dd3fc", "#e879f9", "#ff6b6b", "#7ee787"].forEach((col, i) => {
+      this.engine.images.save(this.generateHourglassIcon(col), "hourglass-" + (i + 1));
+    });
+
+    [
       [whiteCircle, "white-part-circle"],
       [blueCircle, "blue-part-circle"],
     ].forEach(pSprite => {
       this.engine.register(pSprite[0]);
       this.engine.images.save(pSprite[0].img, pSprite[1]);
     });
-    
-    [
-      ["lightning-icon", "yellow", "orange"],
-      ["zap-icon", "blue", "lightBlue"]
-    ].forEach(icon => {
-      var light = new Lightning(this.engine, {
-        x1: 20, y1: 20,
-        x2: 80, y2: 80,
-        innerCol: icon[1], outerCol: icon[2],
-        spawnParticles: false,
-      });
 
-      var lightIcon = document.createElement("canvas");
-      lightIcon.width = lightIcon.height = 100;
-      var lightCtx = lightIcon.getContext("2d");
-
-      light.update();
-      light.draw(lightCtx);
-      this.engine.images.save(lightIcon, icon[0]);
+    // Coloured projectile bodies (shot tint comes from the effect gem) — tint
+    // the white one. White stays the default (no effect gem) shot body; blue
+    // already has its own nicer sprite (blueCircle) above.
+    ["red", "yellow"].forEach(color => {
+      this.engine.images.save(
+        this.generateColoredImage(this.engine.images.get("white-part-circle"), color),
+        color + "-part-circle"
+      );
     });
-    
-    this.engine.globals.cash = this.engine.prod ? 0 : 50000;
+
     this.engine.globals.stats = stats;
     this.engine.globals.levels = new Levels(this.engine);
 
@@ -90,16 +84,20 @@ export default class Game {
 
       this.engine.images.save(this.generateColoredImage(this.engine.images.get("dragon-green")), "dragon-flash");
 
-      this.engine.images.get('white-gems').cut(50);
-      this.engine.images.save(this.engine.images.get('white-gems')[1], "white-gem");
-      
-      this.engine.images.get('blue-gems').cut(50);
-      this.engine.images.save(this.engine.images.get('blue-gems')[3], "blue-gem");
-      
-      this.engine.images.get('yellow-gems').cut(50);
-      this.engine.images.save(this.engine.images.get('yellow-gems')[4], "yellow-gem");
-      
-      this.engine.images.get('purple-gems').cut(50);
+      // One colour-tinted base sprite shared by BOTH helper turrets, so they
+      // read as helpers (distinct from the main base) but identical to each
+      // other. Used in-game + on the inventory screen.
+      this.engine.images.save(this.generateTintedImage(this.engine.images.get("base"), "#35c9d6"), "base-helper");
+
+      // Each gem sheet is 10 tiles (50px) = 10 tiers, ascending in complexity.
+      // Save every tile as "<color>-gem-<tier>" (tier 1..10) for the tier system.
+      ["white", "red", "blue", "yellow"].forEach(color => {
+        var sheet = this.engine.images.get(color + "-gems");
+        sheet.cut(50);
+        for ( var t = 0; t < sheet.length; t++ ) {
+          this.engine.images.save(sheet[t], color + "-gem-" + (t + 1));
+        }
+      });
 
       this.inventory = this.engine.globals.inventory = new Inventory(engine);
       Item.NONE.engine = this.engine;
@@ -108,7 +106,12 @@ export default class Game {
       this._installAutosave();
 
       this.engine.register(this.engine.globals.base = new Base(engine), "base");
-      
+
+      // Two side helper turrets flanking the base (left + right equip slots).
+      var w = this.engine.window.width, h = this.engine.window.height;
+      this.engine.register(new Helper(this.engine, "left", 70, h - 10), "helper");
+      this.engine.register(new Helper(this.engine, "right", w - 70, h - 10), "helper");
+
       this.engine.register(this.engine.globals.spawner = new Spawner(
         this.engine, 
       ));
@@ -132,6 +135,16 @@ export default class Game {
 
       this.settingsScreen = new SettingsScreen(this.engine, {
         onReset: () => this._resetSave(),
+        dev: this.engine.dev,
+        onCheat: () => {
+          this.inventory.cheat();
+          // Close settings and slide the inventory open so you see the new gems.
+          this.settingsScreen.hide = true;
+          this.menu.hide = false;
+          this.inventoryMenu.hide = false;
+          this.invHide = false;
+          this.engine.trigger("openInventory");
+        },
       });
       this.engine.register(this.settingsScreen);
 
@@ -152,33 +165,26 @@ export default class Game {
 
       this.engine.register(new GameUI(this.engine));
 
-      this.engine.on("enemyCollide", () => {
-        this.menu.hide = false;
-        this.inventoryMenu.hide = false;
-        this.engine.unregister("enemy");
-        this.engine.unregister("projectile");
-        this.engine.globals.base.on = false;
-        this.engine.globals.spawner.reset();
-        this.engine.trigger("saveRequested");
-      });
+      this.engine.on("enemyCollide", () => this._exitLevel());
 
       this.engine.on("startGame", () => {
         this.menu.hide = true;
         this.inventoryMenu.hide = true;
         this.engine.globals.base.on = true;
         this.engine.globals.spawner.start();
-        this.engine.register(this.inventoryMenu);      
+        this.engine.register(this.inventoryMenu);
+      });
+
+      // Escape bails out of an in-progress level back to the menu (quick way to
+      // test a gem/weapon then exit).
+      this.engine.onKeyDown(evt => {
+        if ( evt.key === "Escape" && this.engine.globals.base.on ) this._exitLevel();
       });
 
       this.engine.on("levelWin", () => {
         this.menu.hide = false;
         this.inventoryMenu.hide = false;
         this.engine.unregister("projectile");
-
-        if ( this.inventory.count("whiteGem") === 2 && this.engine.prod && !this.tutorialStarted) {
-          this._startMergeTutorial();
-          this.tutorialStarted = true;
-        }
         this.engine.trigger("saveRequested");
       });
 
@@ -278,6 +284,33 @@ export default class Game {
     return img;
   }
 
+  // A little hourglass: tinted frame/caps + sand (top + settled bottom + stream).
+  generateHourglassIcon(frame = "#f0c060") {
+    var c = document.createElement("canvas");
+    c.width = c.height = 100;
+    var ctx = c.getContext("2d");
+
+    // Sand fills first (so the frame strokes over it).
+    ctx.fillStyle = "#ffd86b";
+    ctx.beginPath(); ctx.moveTo(34, 22); ctx.lineTo(66, 22); ctx.lineTo(50, 46); ctx.closePath(); ctx.fill(); // top pile
+    ctx.beginPath(); ctx.moveTo(36, 78); ctx.lineTo(64, 78); ctx.lineTo(50, 60); ctx.closePath(); ctx.fill(); // bottom pile
+    ctx.fillRect(48, 46, 4, 14); // falling stream
+
+    // Glass: two triangles meeting at the neck.
+    ctx.strokeStyle = frame;
+    ctx.lineWidth = 4;
+    ctx.lineJoin = "round";
+    ctx.beginPath(); ctx.moveTo(28, 20); ctx.lineTo(72, 20); ctx.lineTo(50, 50); ctx.closePath();
+    ctx.moveTo(28, 80); ctx.lineTo(72, 80); ctx.lineTo(50, 50); ctx.closePath();
+    ctx.stroke();
+
+    // Top + bottom caps.
+    ctx.lineWidth = 7; ctx.lineCap = "round";
+    ctx.beginPath(); ctx.moveTo(24, 18); ctx.lineTo(76, 18); ctx.moveTo(24, 82); ctx.lineTo(76, 82); ctx.stroke();
+
+    return c;
+  }
+
   generateColoredImage(img, color = "white") {
     var can = document.createElement("canvas");
     can.width = img.width;
@@ -292,9 +325,36 @@ export default class Game {
     return new Image(can);
   }
 
+  // Like generateColoredImage but keeps the original art, laying a translucent
+  // colour wash over only the opaque pixels (source-atop) — a subtle tint.
+  generateTintedImage(img, color, alpha = 0.5) {
+    var can = document.createElement("canvas");
+    can.width = img.width;
+    can.height = img.height;
+    var ctx = can.getContext("2d");
+
+    img.draw(ctx, 0, 0);
+    ctx.globalCompositeOperation = "source-atop";
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = color;
+    ctx.fillRect(0, 0, can.width, can.height);
+
+    return new Image(can);
+  }
+
+  // Tear down the current level and return to the menu (death or Escape).
+  _exitLevel() {
+    this.menu.hide = false;
+    this.inventoryMenu.hide = false;
+    this.engine.unregister("enemy");
+    this.engine.unregister("projectile");
+    this.engine.globals.base.on = false;
+    this.engine.globals.spawner.reset();
+    this.engine.trigger("saveRequested");
+  }
+
   _snapshot() {
     return {
-      cash: this.engine.globals.cash,
       stats: {
         power: { lvl: stats.power.lvl, val: stats.power.val },
         speed: { lvl: stats.speed.lvl, val: stats.speed.val },
@@ -302,8 +362,16 @@ export default class Game {
       items: this.inventory.items.map(i => i?.name ?? null),
       equipment: {
         primary: this.inventory.equipment.primary?.name ?? null,
+        effect: this.inventory.equipment.effect?.name ?? null,
+        left: this.inventory.equipment.left?.name ?? null,
+        leftEffect: this.inventory.equipment.leftEffect?.name ?? null,
+        right: this.inventory.equipment.right?.name ?? null,
+        rightEffect: this.inventory.equipment.rightEffect?.name ?? null,
       },
-      tutorialStarted: !!this.tutorialStarted,
+      // Synthesizer state: loaded fuel gem + sub-fuel bar + burst reservoir.
+      machines: this.inventory.machines,
+      // One-time starter-hourglass bonus already consumed?
+      firstHourglassBonusUsed: this.inventory.firstHourglassBonusUsed,
     };
   }
 
@@ -311,9 +379,6 @@ export default class Game {
     var saved = SaveStore.load();
     if ( !saved ) return;
 
-    if ( typeof saved.cash === "number" ) {
-      this.engine.globals.cash = saved.cash;
-    }
     if ( saved.stats ) {
       ["power", "speed"].forEach(k => {
         if ( saved.stats[k] ) {
@@ -327,11 +392,23 @@ export default class Game {
         return (name && Item.list[name]) ? new Item(this.engine, name) : null;
       });
     }
-    if ( saved.equipment && saved.equipment.primary && Item.list[saved.equipment.primary] ) {
-      this.inventory.equipment.primary = new Item(this.engine, saved.equipment.primary);
+    if ( saved.machines ) {
+      for ( var key in this.inventory.machines ) {
+        if ( saved.machines[key] ) {
+          Object.assign(this.inventory.machines[key], saved.machines[key]);
+        }
+      }
     }
-    if ( saved.tutorialStarted ) {
-      this.tutorialStarted = true;
+    if ( typeof saved.firstHourglassBonusUsed === "boolean" ) {
+      this.inventory.firstHourglassBonusUsed = saved.firstHourglassBonusUsed;
+    }
+    if ( saved.equipment ) {
+      ["primary", "effect", "left", "leftEffect", "right", "rightEffect"].forEach(slot => {
+        var name = saved.equipment[slot];
+        if ( name && Item.list[name] ) {
+          this.inventory.equipment[slot] = new Item(this.engine, name);
+        }
+      });
     }
   }
 
@@ -352,25 +429,4 @@ export default class Game {
     window.location.reload();
   }
 
-  _startMergeTutorial() {
-    var text;
-    this.engine.register(text = new Text("Open inventory ^", 300, 500, {
-      fontColor: "red",
-      fontSize: 30,
-      z: 500,
-    }));
-    this.engine.on("toggleInventory", () => {
-      text.str = "^ Merge gems";
-      text.x = 156;
-      text.y = 180;
-      this.engine.on("itemsMerged", () => {
-        text.str = "Equip weapon ->";
-        text.x = 0;
-        text.y = 580;
-        this.engine.on("itemEquipped", () => {
-          this.engine.unregister(text);
-        })
-      });
-    });
-  }
 }

@@ -84,6 +84,11 @@ export default class Lightning extends GameObject {
       });
       if ( this.spawnParticles ) {
         this.spawnParticles = false;
+        var sparkCol = {
+          yellow: {r: 255, g: 255},
+          white:  {r: 255, g: 255, b: 255},
+          blue:   {g: 128, b: 255},
+        }[this.innerCol] ?? {r: 255, g: 255};
         this.points.forEach(point => {
           if ( Math.random() < 0.5) {
             this.engine.register(new Particle(
@@ -91,7 +96,7 @@ export default class Lightning extends GameObject {
               {
                 start: {
                   ...point,
-                  ...(this.innerCol === "yellow" ? {r: 255, g: 255} : {g:128, b:255}),
+                  ...sparkCol,
                   radius: Math.random()*7+3,
                 },
                 end: {

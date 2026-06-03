@@ -9,19 +9,10 @@ export default class GameUI {
     var engine = this.engine;
     var levels = engine.globals.levels;
     var spawner = engine.globals.spawner;
-    var cash = engine.globals.cash;
     var w = engine.window.width;
 
     ctx.save();
-    ctx.font = "bold 28px Lucida Console, Menlo, monospace";
     ctx.textBaseline = "top";
-    ctx.textAlign = "left";
-    ctx.shadowColor = "rgba(126, 231, 135, 0.55)";
-    ctx.shadowBlur = 10;
-    ctx.fillStyle = "#7ee787";
-    ctx.fillText("$" + cash, 14, 10);
-    ctx.shadowBlur = 0;
-
     if ( levels ) {
       ctx.font = "bold 16px Lucida Console, Menlo, monospace";
       ctx.textAlign = "right";

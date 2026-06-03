@@ -1,3 +1,75 @@
+# Implementation status
+
+> Status of this plan vs what's actually shipped, as of 2026-06-02. The design
+> notes below are the ORIGINAL vision; the shipped game has since diverged into a
+> simpler gem-driven idle loop (see `CLAUDE.md` for how it's actually wired).
+> Numbers/ratios are intentionally rough — a **progression-philosophy pass** is
+> planned, so the checkboxes track *systems built*, not balance.
+
+**Shipped today:** a shooting Base; levels with enemies + bosses; **3 gem colors
+(red/blue/yellow), each both a weapon and an effect, plus fuel**; the synthesis
+idle loop (per-color synths with a constant base rate + gem-fuel + machine
+leveling); **hourglasses** as the sole level reward + the burn-boost that turns
+play into idle progress; drag-to-merge / equip / swap / fuel across inventory,
+equip, and synth slots; 4 equip slots (weapon + effect + 2 helper turrets);
+save/load; settings (reset + dev cheat); level select; a basic fallback shot.
+
+The economy is now **money-free** (gems + hourglasses + time). The big remaining
+work is **(a)** a real progression/balance philosophy, **(b)** the key-unlock /
+onboarding arc, and **(c)** combo-color gems & advanced synthesis.
+
+### Synthesis economy
+- [x] Per-color synthesizers (red/blue/yellow), each output its color
+- [x] Fuel = any gem dropped into a synth (tier = bonus rate) + a constant base
+      rate even when empty; fuel gem is persistent (never consumed)
+- [x] Machine leveling — synths gain output tiers as they produce (XP bar)
+- [x] Hourglasses (from levels) = the boost: burn a synth at a big multiplier for
+      a short, particle-laden burst; mergeable with a per-tier bonus
+- [x] Money removed — synth fuel is gems/time, not cash
+- [ ] Advanced synthesis details / a deliberate rate & cost curve (design pass)
+
+### Gem quality system
+- [x] Numbered tiers (10 per color, art tiles from the gem sheets)
+- [x] Merge rule: same color + same tier → next tier (cap 10); per-tier scaling
+      for both the weapon and the effect role
+- [ ] Classes (Alpha / Beta / Omega) — skipped; flat tiers instead for now
+- [ ] Combo-color tiers (cross-color merges)
+
+### Color system  *(red/blue/yellow; white gems removed)*
+- [x] Red = Ball weapon / Explosive effect
+- [x] Blue = Stinger weapon / Homing effect
+- [x] Yellow = Laser weapon / Chain effect
+- [ ] Combo-color gems (Purple / Green / Orange / Rainbow) from mixing colors
+
+### Equipment slots  *(today: weapon + effect + 2 helper turrets)*
+- [x] Primary weapon slot (+ always-on weapon badge readout)
+- [x] Effect gem slot (explosive / homing / chain — orthogonal to weapon)
+- [x] Two helper-turret slots (weapon only, auto-aim, ~25% each)
+- [ ] Power Core slot (attack speed + number of slots, max 3)
+- [ ] Shield slot
+- [ ] Drone slot
+
+### Progression / unlocks
+- [x] Bosses exist (combat); level N rewards a tier-N hourglass
+- [x] Slots all open (the sacrifice-to-unlock experiment was removed)
+- [ ] Keys granted for beating bosses → spend to unlock features (non-sacrifice)
+- [ ] Onboarding arc — tutorial code stripped; a new one comes after the design pass
+
+### Destruction
+- [~] Furnace removed for now (no money); a "recycle gem → hourglass" feature may
+      take its place later. Gems are discarded by... (no discard yet — TBD)
+
+### Discovery / meta
+- [ ] Recipe logbook (track combos found)
+- [ ] Gradual reveal of combos
+
+### Reactor-tier arc  *(from the README "ArcPlan")*
+- [ ] Difficulty/idle pacing built on reactor tiers
+- [ ] Reactor power assigned by clicking a synth, expiring after ~1 min
+- [ ] Level clears granting "5× playtime" power (idle + active hybrid economy)
+
+---
+
 #### Start
 
 In this game, you create and merge gems, making them ever more powerful, and equip them in various slots to increase your strength.

@@ -5,51 +5,55 @@ import Item from "./Item.js";
 export default class Levels {
   constructor(engine) {
     this.engine = engine;
+    // Levels no longer drop gems OR money — gems come only from synthesis, and
+    // money is out of the loop. The ONLY level reward is an HOURGLASS (which
+    // boosts synth growth), so the game is an idle plant you speed up by playing.
+    // `reward` is the hourglass tier; `chance:100` = always drops, and it's
+    // repeatable (replay a level for more). Higher levels give bigger hourglasses.
+    // The ramp is a ROUGH first pass; the last (purple) level is unbeatable.
     this.list = [
       {
-        enemies: 4,
-        spawnRate: 3,
+        // Beatable from a cold start: the no-gem basic shot does 1 dmg, so
+        // 2-hp enemies die in 2 hits. Just a few, slow — something to do before
+        // your first synthesized gem.
+        enemies: 3,
+        spawnRate: 1.6,
         enemyHp: 2,
-        reward: "whiteGem",
-        qty: 2,
+        reward: "hourglass", chance: 100,
       },
       {
-        enemies: 6,
-        spawnRate: 0.5,
-        enemyHp: 6,
-        reward: "whiteGem",
-        chance: 50,
+        enemies: 8,
+        spawnRate: 1.2,
+        enemyHp: 8,
+        reward: "hourglass2", chance: 100,
       },
       {
         enemies: 10,
-        spawnRate: 0.5,
-        enemyHp: 15,
-        reward: "whiteGem",
-        chance: 100,
+        spawnRate: 1.0,
+        enemyHp: 18,
+        reward: "hourglass3", chance: 100,
       },
       {
-        enemies: 15,
-        spawnRate: 0.5,
-        enemyHp: 25,
-        reward: "blueGem",
-        chance: 50,
+        enemies: 12,
+        spawnRate: 0.9,
+        enemyHp: 32,
+        reward: "hourglass4", chance: 100,
       },
       {
-        enemies: 15,
+        enemies: 14,
         enemyType: "red",
-        spawnRate: 0.5,
-        enemyHp: 20,
-        reward: "blueGem",
-        chance: 100,
+        spawnRate: 0.8,
+        enemyHp: 55,
+        reward: "hourglass5", chance: 100,
       },
       {
         icon: engine.images.get("dragon-green"),
-        enemies: 20,
-        spawnRate: 1,
-        enemyHp: 75,
+        enemies: 16,
+        spawnRate: 0.9,
+        enemyHp: 80,
         boss: "green",
-        reward: "greenGem",
-        chance: 100,
+        bossHp: 1000,
+        reward: "hourglass6", chance: 100,
       },
       {
         icon: engine.images.get("dragon-purple"),
@@ -57,6 +61,7 @@ export default class Levels {
         spawnRate: 0.75,
         enemyHp: 999,
         boss: "purple",
+        reward: "hourglass7", chance: 100,
       },
     ];
 
@@ -99,7 +104,6 @@ export default class Levels {
     if ( val >= 0 && val <= this.list.length - 1 ) {
       this._selected = val;
       this.current = this.list[val];
-      this.current.cash = this.current.cash ?? this.current.enemies * this.current.enemyHp * (this.current.enemyType === "red" ? 2 : 1);
       if ( !this.current.icon ) {
         var icon = document.createElement("canvas");
         icon.width = 100;

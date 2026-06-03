@@ -25,7 +25,14 @@ export default class GameEngine {
     this.window = new GameWindow(this, options.canvasID ?? "gameCanvas", this.gameObjects.all, options);
     this.images.preload("fullscreen");
 
-    this.dev = window.location.href.indexOf("localhost") !== -1;
+    // Dev environment: local dev server, OR the dojo's dev build, which is
+    // served from a "/<app>.dev/" mount (prod is "/<app>/", and an installable
+    // subdomain serves prod at "/"). So the first path segment ending in
+    // ".dev" is the reliable dev signal on the dojo. Drives the dev-only
+    // perks already scattered through the game (starting cash, gem inventory).
+    var host = window.location.hostname;
+    this.dev = host === "localhost" || host === "127.0.0.1"
+      || /^\/[^/]+\.dev(\/|$)/.test(window.location.pathname);
 
     document.addEventListener('keydown', (event) => {
       var key = KeyNames[event.keyCode] || event.keyCode;
@@ -68,6 +75,20 @@ export default class GameEngine {
 
     document.addEventListener('fullscreenchange', (event) => {
       this.fullscreen = !!document.fullscreenElement;
+    });
+
+    // When the app is backgrounded (tabbed away, screen off, switched apps),
+    // requestAnimationFrame already stops so gameplay halts on its own — but
+    // HTML5 Audio keeps playing. Pause all sound on hide, resume on return.
+    document.addEventListener('visibilitychange', () => {
+      if ( document.hidden ) {
+        this.sounds.pauseAll();
+      } else {
+        // rAF was throttled to 0 while hidden, so nextTick is stale; reset it
+        // to avoid a catch-up burst of update() ticks on the first frame back.
+        this.nextTick = new Date().getTime();
+        this.sounds.resumeAll();
+      }
     });
     if ( options.showFullscreenSplash ) {
       this.window.register(new FullscreenSplash(this));

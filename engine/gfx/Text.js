@@ -125,13 +125,21 @@ export default class Text {
   }
 
   _generateLines(ctx) {
-    ctx.save();
-    ctx.font = this.style;
-
+    // Single line (no wrap): we never touch ctx here, so there is nothing to
+    // save/restore. The old code save()'d at the top and then `return`ed in
+    // THIS branch — before the restore() at the end of the method — leaking one
+    // canvas state-stack entry on every text render. UIWindows re-setText their
+    // labels each frame (which nulls `lines`, so this re-runs), so the stack
+    // grew by ~one-per-text-draw every frame, forever; save/restore — and thus
+    // all drawing on that canvas — got slower the longer the game ran. Bail out
+    // before any save() so the common path can't leak.
     if ( !this.maxWidth ) {
       this.lines = [ this.str ];
       return;
     }
+
+    ctx.save();
+    ctx.font = this.style;
     this.lines = [];
     var words = this.str?.split(" ");
     var numWords = 0;

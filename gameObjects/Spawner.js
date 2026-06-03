@@ -42,7 +42,7 @@ export default class Spawner {
     if ( this.enemiesLeft === 0 && !this.rewardAnim) {
       var boss = this.engine.globals.levels.current.boss;
       if ( boss && this.spawnBoss ) {
-        this.engine.register(new Boss(this.engine, 2200, boss), "enemy");
+        this.engine.register(new Boss(this.engine, this.engine.globals.levels.current.bossHp ?? 2200, boss), "enemy");
         this.spawnBoss = false;
         this.delayReward = 5;
       } else {
@@ -57,17 +57,18 @@ export default class Spawner {
     }
 
     if ( this.rewardAnim ) {
-      this.rewardAnim.alpha = Math.min(this.rewardAnim.alpha + 0.01, 1);
+      this.rewardAnim.alpha = Math.min(this.rewardAnim.alpha + 0.02, 1);
       this.rewardAnim.rad += this.rewardAnim.speed * 0.02;
       this.rewardAnim.dist-=this.rewardAnim.speed;
-      this.rewardAnim.speed += 0.07;
+      this.rewardAnim.speed += 0.22;   // snappier spiral-in
 
       if ( this.rewardAnim.dist < 0 ) {
         this.reset();
         this.rewardAnim = null;
-        new Enemy(this.engine, this.engine.window.width/2, this.engine.window.height/2, this.engine.globals.levels.current.cash)._createCash();
+        // No cash drop — the level reward is the hourglass handed out by
+        // rollForReward() (money is out of the loop now).
         this.engine.globals.levels.rollForReward();
-        setTimeout(() => this.engine.trigger("levelWin"), 2500);
+        setTimeout(() => this.engine.trigger("levelWin"), 600);   // quick return to menu
       }
     }
   }
@@ -94,12 +95,12 @@ export default class Spawner {
     this.engine.flash.show("Victory!", {
       y: 280,
       color: "#0f0",
-      showFor: 2,
+      showFor: 1.2,
     });
 
     this.rewardAnim = {
-      dist: 350,
-      speed: 1,
+      dist: 240,
+      speed: 1.5,
       rad: 0,
       count: 5,
       alpha: 0,
