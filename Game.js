@@ -259,6 +259,20 @@ export default class Game {
           this.inventoryMenu.hideComponents();
           this.invHide = false;
         }
+
+        // Both menus are translucent glass now, so they can't sit on top of each
+        // other. Instead the title slides out to the LEFT exactly as the
+        // inventory slides in from the RIGHT — you flip between the two panels
+        // rather than seeing one through the other. (inv originX: width=closed,
+        // 0=open → title originX: 0=centred, -width=fully off-left.)
+        this.menu.originX = this.inventoryMenu.originX - this.engine.window.width;
+
+        // The title screen is a glass pane over the starfield — hide the idle
+        // base + flanking turrets while the menu is up so it floats over clean
+        // space (they reappear the moment a level starts).
+        var atMenu = !this.menu.hide;
+        this.engine.globals.base.hide = atMenu;
+        this.engine.getObjects("helper").forEach(hl => hl.hide = atMenu);
       });
 
       if ( this.engine.dev ) {

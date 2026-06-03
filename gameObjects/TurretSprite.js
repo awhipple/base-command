@@ -102,6 +102,7 @@ export function drawTurret(ctx, o) {
   var flash = o.flash ?? 0;
   var flashSide = o.flashSide ?? 0;
   var phase = o.phase ?? 0;
+  var charge = o.charge ?? 0;                    // 0..1 laser pre-fire arc charge
   var tint = o.tint || null;
 
   // Metal palette, optionally washed toward the helper tint.
@@ -117,7 +118,7 @@ export function drawTurret(ctx, o) {
 
   ctx.save();
   ctx.rotate(aim);                              // local +x axis = aim direction
-  drawGun(ctx, scale, reach, sideOff, weapon, ap, m, flash, flashSide, phase);
+  drawGun(ctx, scale, reach, sideOff, weapon, ap, m, flash, flashSide, phase, charge);
   ctx.restore();
 
   ctx.restore();
@@ -194,8 +195,8 @@ function drawHull(ctx, scale, m, ap, phase) {
 // mount — only the equipped weapon's barrels are drawn (so the silhouette
 // changes with your loadout), themed to its role and tinted by the effect
 // colour. Then a common mantlet hub covers the barrel roots.
-function drawGun(ctx, scale, reach, sideOff, weapon, ap, m, flash, flashSide, phase) {
-  if ( weapon === "laser" )        drawLaserGun(ctx, scale, reach, ap, m, flash, phase);
+function drawGun(ctx, scale, reach, sideOff, weapon, ap, m, flash, flashSide, phase, charge) {
+  if ( weapon === "laser" )        drawLaserGun(ctx, scale, reach, ap, m, flash, phase, charge);
   else if ( weapon === "ball" )    drawBallGun(ctx, scale, reach, ap, m, flash, phase);
   else if ( weapon === "stinger" ) drawStingerGun(ctx, scale, reach, sideOff, ap, m, flash, flashSide, phase);
   else                             drawBasicGun(ctx, scale, reach, ap, m, flash, phase);
@@ -203,9 +204,10 @@ function drawGun(ctx, scale, reach, sideOff, weapon, ap, m, flash, flashSide, ph
 }
 
 // LASER — a Tesla emitter. A coil-wrapped barrel ends in a focusing lens flanked
-// by two electrode prongs; arcs crackle across the fork (faintly idle, fully on
-// a shot). No recoil — it's a beam.
-function drawLaserGun(ctx, scale, reach, ap, m, flash, phase) {
+// by two electrode prongs; arcs crackle across the fork. The crackle CHARGES UP
+// over the gun's pre-fire wind-up (`charge` 0..1) and discharges into the shot,
+// so it fires once per shot at the weapon's actual rate. No recoil — it's a beam.
+function drawLaserGun(ctx, scale, reach, ap, m, flash, phase, charge) {
   var root = 16 * scale, lw = 6 * scale, tip = reach - 10 * scale;
   metalBarrel(ctx, root, tip, 0, lw, m);
 
@@ -243,12 +245,17 @@ function drawLaserGun(ctx, scale, reach, ap, m, flash, phase) {
   });
   glowDot(ctx, lensX, 0, 7 * scale, ap, 0.95 * pulse);
 
-  // Tesla arcs across the prong mouth — flickering idle, solid on a shot.
-  var idle = Math.sin(phase * 9) > 0.45;
-  if ( flash > 0.1 || idle ) {
-    var inten = Math.max(flash, idle ? 0.55 : 0);
+  // Tesla arcs across the prong mouth. `charge` (0..1) ramps over the gun's
+  // pre-fire wind-up and discharges into the muzzle flash, so the crackle
+  // builds right before each shot AT THE WEAPON'S FIRE RATE (faster gems zap
+  // more often) instead of on a free-running timer. A faint idle shimmer keeps
+  // the emitter alive between shots.
+  var flick = 0.45 + 0.55 * (0.5 + 0.5 * Math.sin(phase * 26));    // rapid electric flicker
+  var shimmer = Math.sin(phase * 9) > 0.6 ? 0.18 : 0.05;          // faint idle life
+  var inten = Math.max(flash, shimmer, charge * flick);
+  if ( inten > 0.08 ) {
     teslaArc(ctx, pTip, -spread, pTip, spread, ap, scale, inten, phase * 17);
-    teslaArc(ctx, lensX, 0, pTip, (flash > 0.1 ? 1 : -1) * spread, ap, scale, inten * 0.8, phase * 13 + 2);
+    teslaArc(ctx, lensX, 0, pTip, (charge > 0.25 || flash > 0.1 ? 1 : -1) * spread, ap, scale, inten * 0.8, phase * 13 + 2);
   }
   if ( flash > 0.02 ) muzzleFlash(ctx, lensX, 0, 15 * scale, ap, flash);
 }

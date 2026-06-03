@@ -11,6 +11,8 @@ export default class Base extends GameObject {
   aim = -Math.PI / 2;   // barrel direction (radians); starts pointing up
   flash = 0;            // decaying muzzle-flash intensity for the turret
   flashSide = 1;        // which stinger barrel last fired (±1)
+  charge = 0;           // 0..1 laser pre-fire Tesla-arc charge (ramps over wind-up)
+  charging = false;     // true between a laser's fire-timer trip and the shot leaving
   life = 0;             // tick counter -> idle reactor/lens pulse phase
 
   constructor(engine) {
@@ -35,6 +37,10 @@ export default class Base extends GameObject {
   update() {
     this.life++;
     this.flash *= 0.8;   // muzzle flash decays each tick
+    // Pre-fire arc charge: ramps over the ~150ms wind-up while `charging`, then
+    // decays after the shot. Drives the laser's Tesla crackle so it builds right
+    // before each shot at the weapon's actual rate (see TurretSprite.drawLaserGun).
+    this.charge = this.charging ? Math.min(1, this.charge + 0.16) : this.charge * 0.55;
 
     // With no gem equipped, fall back to the basic shot (tiny, 1 dmg, short range)
     // so level 1 is beatable from a cold start.
@@ -46,6 +52,8 @@ export default class Base extends GameObject {
       var isLaser = weapon.projectile.laser;
       if ( !isLaser ) {
         this.engine.sounds.play("shot", {volume: 0.12});
+      } else {
+        this.charging = true;   // begin the laser's pre-fire Tesla charge
       }
       setTimeout(() => {
         var hit = weapon.shoot(this.firePos.x, this.firePos.y, this.aim, { spread: TURRET.side(1) });
@@ -53,6 +61,7 @@ export default class Base extends GameObject {
         // holds the side the shot just used -> alt ? -side : +side).
         this.flash = 1;
         this.flashSide = weapon.alt ? -1 : 1;
+        this.charging = false;   // discharge: the arc gives way to the muzzle flash
         // The laser always zaps when fired (not only on a hit); other weapons
         // already played their "shot" above.
         if ( isLaser ) this.engine.sounds.play("zap", {volume: 0.25});
@@ -75,6 +84,7 @@ export default class Base extends GameObject {
       weapon: weaponTypeOf(this.equip.primary),
       effectColor: effectColorOf(this.equip.effect),
       flash: this.flash, flashSide: this.flashSide, phase: this.life / 60,
+      charge: this.charge,
     });
 
     var weapon = this.equip.primary ?? Item.NONE;

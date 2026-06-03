@@ -4,7 +4,7 @@ import { BoundingRect } from "../../engine/GameMath.js";
 import Item from "../Item.js";
 import Banner from "./Banner.js";
 import Button from "../../engine/gfx/ui/window/components/Button.js";
-import { roundedRectPath } from "./canvas.js";
+import { roundedRectPath, drawGlass } from "./canvas.js";
 
 class PrimaryButton extends Button {
   drawComponent() {
@@ -89,18 +89,29 @@ export default class TitleScreen extends UIWindow {
           engine.trigger("startGame");
         },
       },
-    ], {
-      bgColor: "#000",
-    })
+    ])
+    // Transparent window: the opaque fill + border are replaced by a glass pane
+    // (drawn in draw()) so the starfield shows through. Note bgColor must be
+    // nulled AFTER super() — UIWindow's constructor coerces a null option to
+    // "#fff", which would paint the offscreen white. `color` neutralises
+    // GameObject.draw's rect fill; hideBorder drops its border.
+    this.bgColor = null;
+    this.color = "rgba(0,0,0,0)";
+    this.hideBorder = true;
 
     this.gearRect = new BoundingRect(engine.window.width - 50, 10, 40, 40);
   }
 
   draw(ctx) {
+    // Glass pane over the drifting starfield, then the menu contents on top.
+    drawGlass(ctx, this.rect.x, this.rect.y, this.rect.w, this.rect.h, {
+      tint: "rgba(12,17,34,0.55)",
+    });
     super.draw(ctx);
     var r = this.gearRect;
     var gx = r.x + r.w / 2, gy = r.y + r.h / 2;
     ctx.save();
+    ctx.translate(this.originX, 0);   // ride along as the title slides off-left
     // The whole rect is a button — draw a rounded background so the entire area
     // (including the gear's centre hole) reads and behaves as one clickable button.
     roundedRectPath(ctx, r.x, r.y, r.w, r.h, 8);
@@ -125,12 +136,12 @@ export default class TitleScreen extends UIWindow {
   }
 
   onMouseMove(event) {
-    this.gearHover = !this.hide && this.gearRect.contains(event.pos);
+    this.gearHover = !this.hide && this.gearRect.contains(event.pos.x - this.originX, event.pos.y);
     super.onMouseMove(event);
   }
 
   onMouseClick(event) {
-    if ( !this.hide && this.gearRect.contains(event.pos) ) {
+    if ( !this.hide && this.gearRect.contains(event.pos.x - this.originX, event.pos.y) ) {
       this.engine.trigger("openSettings");
       return false;
     }

@@ -13,7 +13,10 @@ export default class GameUI {
 
     ctx.save();
     ctx.textBaseline = "top";
-    if ( levels ) {
+    // Only show the level/enemy HUD while actually in a level (spawner running) —
+    // at the title it just clutters the corner next to the settings cog. (The
+    // title screen shows the selected level + enemy count in its own panel.)
+    if ( levels && spawner && spawner.on ) {
       ctx.font = "bold 16px Lucida Console, Menlo, monospace";
       ctx.textAlign = "right";
       ctx.fillStyle = "#9aa7c2";

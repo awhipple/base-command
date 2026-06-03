@@ -29,6 +29,8 @@ export default class Helper extends GameObject {
   aim = 3 * Math.PI / 2;   // point up until it sees a target
   flash = 0;
   flashSide = 1;
+  charge = 0;           // 0..1 laser pre-fire Tesla-arc charge (ramps over wind-up)
+  charging = false;     // true between a laser's fire-timer trip and the shot leaving
   life = 0;
 
   constructor(engine, slot, x, y) {
@@ -44,6 +46,10 @@ export default class Helper extends GameObject {
   update() {
     this.life++;
     this.flash *= 0.8;   // muzzle flash decays each tick
+    // Pre-fire arc charge: ramps over the ~100ms wind-up while `charging`, then
+    // decays after the shot, so the laser's Tesla crackle builds right before
+    // each shot at this helper's fire rate (see TurretSprite.drawLaserGun).
+    this.charge = this.charging ? Math.min(1, this.charge + 0.22) : this.charge * 0.55;
 
     // Only active while the main base is (same level/win gating). With no gem in
     // this helper's slot the turret doesn't exist at all (see draw()).
@@ -76,6 +82,7 @@ export default class Helper extends GameObject {
     this.fireIn -= 1 / 60;
     if ( this.fireIn < 0 ) {
       this.fireIn += 1 / (this.engine.globals.stats.speed.val * weapon.projectile.speed * Helper.FIRE_MULT);
+      if ( weapon.projectile.laser ) this.charging = true;   // begin the laser's pre-fire arc
       setTimeout(() => {
         weapon.shoot(this.firePos.x, this.firePos.y, this.aim, {
           // Each helper has its OWN effect slot ("<slot>Effect"); null = no effect.
@@ -87,6 +94,7 @@ export default class Helper extends GameObject {
         });
         this.flash = 1;
         this.flashSide = weapon.alt ? -1 : 1;
+        this.charging = false;   // discharge: the arc gives way to the muzzle flash
       }, 100);
     }
   }
@@ -111,6 +119,7 @@ export default class Helper extends GameObject {
       effectColor: effectColorOf(this.equip[this.slot + "Effect"]),
       tint: Helper.TINT,
       flash: this.flash, flashSide: this.flashSide, phase: this.life / 60,
+      charge: this.charge,
     });
   }
 }

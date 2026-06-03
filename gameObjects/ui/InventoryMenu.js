@@ -5,7 +5,7 @@ import { UIComponent } from "../../engine/gfx/ui/window/UIComponent.js";
 import Item, { GEM_MAX_TIER, BURST_SECONDS } from "../Item.js";
 import CrackleBed from "../../engine/CrackleBed.js";
 import { drawTurret, weaponTypeOf, effectColorOf } from "../TurretSprite.js";
-import { roundedRectPath, drawLock } from "./canvas.js";
+import { roundedRectPath, drawLock, drawGlass, drawMetalBar } from "./canvas.js";
 import EffectRect from "../effects/EffectRect.js";
 import FlyingGem from "../effects/FlyingGem.js";
 import Banner from "./Banner.js";
@@ -116,11 +116,16 @@ export default class InventoryMenu extends UIWindow {
         type: Equipment,
       },
     ], {
-      bgColor: "#000",
-      borderColor: "#2a3a5a",
       outerPadding: 3,
       z: 101,
     });
+    // Transparent window — a glass console pane (drawn in draw()) replaces the
+    // opaque fill so a hint of starfield reads through. bgColor must be nulled
+    // AFTER super() (UIWindow coerces a null option to "#fff"). More opaque than
+    // the title so the dense icon grid stays legible.
+    this.bgColor = null;
+    this.color = "rgba(0,0,0,0)";
+    this.hideBorder = true;
 
     // The slide-out tab handle straddles the panel's left edge (originX): the
     // "SYNTH" label shows on the protruding half when the panel is closed,
@@ -225,10 +230,6 @@ export default class InventoryMenu extends UIWindow {
       this.engine.trigger("itemEquipped");   // move/swap into an equip slot
     }
 
-    // Changing any equipped weapon/effect closes an open stat readout so the new
-    // turret art is immediately visible.
-    if ( target.kind === "equip" && this._equip ) this._equip.focus = null;
-
     this.engine.trigger("openInventory");        // rebuild the grid's icon rects
     this.engine.trigger("saveRequested");
   }
@@ -243,8 +244,19 @@ export default class InventoryMenu extends UIWindow {
   }
 
   draw(ctx) {
+    // Glass console pane (slides with the panel via originX), then the contents.
+    drawGlass(ctx, this.rect.x, this.rect.y, this.rect.w, this.rect.h, {
+      tint: "rgba(9,13,26,0.85)",
+      sheen: 0.06,
+    });
     super.draw(ctx);
     this._drawTab(ctx);
+
+    // Metal rail capping the title↔inventory seam (this panel's leading edge).
+    // Skipped when fully parked off-screen right (no seam to hide then).
+    if ( this.rect.x < this.engine.window.width - 0.5 ) {
+      drawMetalBar(ctx, this.rect.x, this.rect.y, this.rect.h);
+    }
   }
 
   // The slide-out tab handle, in the title screen's button language: rounded,
@@ -1127,16 +1139,9 @@ class Equipment extends UIComponent {
     };
     this.lockHover = null;
 
-    // Current-weapon badge on the base's chest: SHAPE = weapon type (from the
-    // primary gem), COLOUR = the effect gem's colour. Tap it (or the turret) for
-    // the live stat readout.
-    this.weaponBadge = { x: W / 2, y: 112, r: 22 };
-
-    // Tap targets for the live stat readouts. The player turret + its weapon
-    // badge open the main readout; each helper turret opens its own. A readout
-    // shows only while focused and dismisses on a tap elsewhere, so the turret
-    // art stays visible. (Component-local coords, like the slots above.)
-    this.focus = null;   // null | "player" | "left" | "right"
+    // Hover targets for the live stat readouts — HOVER the player turret or a
+    // helper turret to show its readout (no click, no weapon badge). Component-
+    // local coords, like the slots above.
     this.playerHit = new BoundingRect(W / 2 - 50, 86, 100, H - 86);
     this.helperHit = {
       left:  new BoundingRect(helperX.left  - 34, H - 66, 68, 66),
@@ -1155,16 +1160,9 @@ class Equipment extends UIComponent {
   flashSlot(slot) { this.equipFlash[slot] = SLOT_FLASH_FRAMES; }
 
   onMouseClick(event) {
-    // Tap the turret art or the weapon badge to open its live stat readout; tap
-    // anywhere else to lose focus (close it). NOT a toggle — tapping the same
-    // target keeps it open. (On mobile the engine fires an onMouseMove just
-    // before this, so the hover flags below are fresh.)
-    if ( this._hoverHelper && this._helperVisible(this._hoverHelper) ) { this.focus = this._hoverHelper; return; }
-    if ( this._hoverPlayer ) { this.focus = "player"; return; }
-    this.focus = null;
-
-    // Otherwise pick up the equipped gem to drag it (out to inventory = unequip;
-    // onto another slot = move/merge). No more click-to-unequip.
+    // Pick up the equipped gem to drag it (out to inventory = unequip; onto another
+    // slot = move/merge). The turret/helper stat readouts are hover-driven now, so
+    // there's nothing to click for them.
     if ( this.equipHover && this.equipment[this.equipHover] ) {
       this.engine.globals.dragItem = this.equipment[this.equipHover];
       this.engine.globals.dragSource = { kind: "equip", slot: this.equipHover };
@@ -1172,12 +1170,10 @@ class Equipment extends UIComponent {
   }
 
   onMouseMove(event) {
-    // Readout tap targets (the turret art + weapon badge). weaponHover lights the
-    // badge when the player turret is under the cursor.
+    // Which turret is hovered → drives the live stat readouts (player / helper).
     this._hoverPlayer = this.playerHit.contains(event.pos);
     this._hoverHelper = this.helperHit.left.contains(event.pos) ? "left"
                       : this.helperHit.right.contains(event.pos) ? "right" : null;
-    this.weaponHover = this._hoverPlayer;
 
     // Which lock is under the cursor (for key-drop targeting + hover glow). The
     // effect lock shows while effect is locked; the helper locks appear only once
@@ -1206,14 +1202,8 @@ class Equipment extends UIComponent {
   }
 
   update() {
-    // Pointer cursor over a tappable readout target (desktop affordance).
+    // Pointer cursor over a hovered turret (it surfaces the stat readout).
     if ( this._hoverPlayer || this._hoverHelper ) this.engine.cursor = "pointer";
-  }
-
-  // Lifecycle: drop any open readout when the panel hides, so reopening starts
-  // on the turret art rather than a stuck-open tooltip.
-  hide() {
-    this.focus = null;
   }
 
   // A helper turret + its slots are VISIBLE only once the effect slot is unlocked
@@ -1356,71 +1346,6 @@ class Equipment extends UIComponent {
     });
   }
 
-  _drawWeaponBadge(ctx, b, type, color, hover) {
-    ctx.save();
-    ctx.beginPath();
-    ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
-    ctx.fillStyle = "rgba(8,10,18,0.88)";
-    ctx.fill();
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = hover ? "#ffffff" : color;
-    ctx.stroke();
-
-    ctx.fillStyle = color;
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 3;
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    if ( type === "ball" ) {
-      ctx.beginPath();
-      ctx.arc(b.x, b.y, 9, 0, Math.PI * 2);
-      ctx.fill();
-    } else if ( type === "stinger" ) {
-      [-6, 2].forEach(off => {
-        ctx.beginPath();
-        ctx.moveTo(b.x + off - 4, b.y - 7);
-        ctx.lineTo(b.x + off + 5, b.y);
-        ctx.lineTo(b.x + off - 4, b.y + 7);
-        ctx.stroke();
-      });
-    } else if ( type === "aoe" ) {
-      for ( var i = 0; i < 8; i++ ) {
-        var a = i * Math.PI / 4;
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(b.x + Math.cos(a) * 5, b.y + Math.sin(a) * 5);
-        ctx.lineTo(b.x + Math.cos(a) * 13, b.y + Math.sin(a) * 13);
-        ctx.stroke();
-      }
-      ctx.beginPath();
-      ctx.arc(b.x, b.y, 5, 0, Math.PI * 2);
-      ctx.fill();
-    } else if ( type === "laser" ) {
-      // A vertical beam with a bright core + a muzzle dot.
-      ctx.lineWidth = 5;
-      ctx.globalAlpha = 0.4;
-      ctx.beginPath();
-      ctx.moveTo(b.x, b.y - 13);
-      ctx.lineTo(b.x, b.y + 13);
-      ctx.stroke();
-      ctx.globalAlpha = 1;
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(b.x, b.y - 13);
-      ctx.lineTo(b.x, b.y + 13);
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.arc(b.x, b.y + 11, 3, 0, Math.PI * 2);
-      ctx.fill();
-    } else {
-      ctx.fillStyle = "#8a93a8";
-      ctx.beginPath();
-      ctx.arc(b.x, b.y, 4, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    ctx.restore();
-  }
-
   drawComponent() {
     // The main turret + the two helper minis (the same hand-rolled art as the
     // play screen), aimed up, behind their slots. Shape = equipped weapon type,
@@ -1476,27 +1401,22 @@ class Equipment extends UIComponent {
     // (chain trades per-hit damage for free reach), nothing when ~0.
     var dmgMod = b => Math.abs(b) <= 0.001 ? "" : " (" + (b < 0 ? "−" : "+") + fmt(Math.abs(b)) + ")";
 
-    // Current-weapon badge (shape = type, colour = effect) — always visible as
-    // the tappable weapon icon on the turret. The stat READOUT shows only while
-    // focused (tap the turret or badge); tap off to dismiss, so the turret art
-    // stays visible when you're admiring/swapping weapons.
+    // Player weapon readout — shown while the player turret is HOVERED. Anchored
+    // at the base's chest (where the weapon badge used to sit).
     var stats = this._weaponStats();
-    var badgeColor = stats.effectColor ?? "#cfd6e2";
-    this._drawWeaponBadge(this.ctx, this.weaponBadge, stats.type, badgeColor, this.weaponHover || this.focus === "player");
-
-    if ( this.focus === "player" ) {
+    var accent = stats.effectColor ?? "#cfd6e2";
+    if ( this._hoverPlayer ) {
       var lines = [
-        { t: stats.name, c: badgeColor },
+        { t: stats.name, c: accent },
         { t: "Dmg " + fmt(stats.base) + dmgMod(stats.bonus), c: "#e8edf6" },
         { t: "Rate " + fmt(stats.rate) + "/s", c: "#e8edf6" },
       ];
       (stats.effectLines || []).forEach(t => lines.push({ t, c: stats.effectColor ?? "#cbd5e1" }));
-      this._drawReadout(lines, this.weaponBadge.x, this.weaponBadge.y + this.weaponBadge.r + 6, badgeColor);
+      this._drawReadout(lines, this.width / 2, 100, accent);
     }
 
-    // Helper readout — shows only while that helper's turret is focused (tap the
-    // helper turret); tap off to dismiss.
-    var helperSide = (this.focus === "left" || this.focus === "right") ? this.focus : null;
+    // Helper readout — shown while that helper's turret is HOVERED (and unlocked).
+    var helperSide = (this._hoverHelper && this._helperVisible(this._hoverHelper)) ? this._hoverHelper : null;
     if ( helperSide ) {
       var hs = this._helperStats(helperSide);
       var hlines = hs.none
