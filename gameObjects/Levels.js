@@ -45,15 +45,15 @@ export default class Levels {
         spawnRate: 0.9,
         enemyHp: 32,
         straferChance: 45,        // ~45% of spawns are fast diving Strafers
-        straferHp: 22,            // a bit squishier than a grunt (they're evasive)
+        straferHp: 30,            // just under a grunt (32): evasive, but AoE no longer one-shots them
         reward: "hourglass4", chance: 100,
         key: "green",             // one-time: 1st helper
       },
       {
-        enemies: 14,
+        enemies: 12,              // eased 14→12: reds split into 2 whites each, so count is the real load — fewer reds = less swarm
         enemyType: "red",
         spawnRate: 0.9,           // eased 0.8→0.9 (match neighbors) so red grunts don't pile up
-        enemyHp: 48,              // eased 55→48 to smooth the HP spike off level 4 (32)
+        enemyHp: 44,              // eased 48→44 (was 55): trim the split-wave's effective HP to soften the level-5 cliff
         reward: "hourglass5", chance: 100,
         key: "blue",              // one-time: 3rd (last) synth
       },
