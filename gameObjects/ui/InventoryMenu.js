@@ -135,19 +135,11 @@ export default class InventoryMenu extends UIWindow {
     this.invOpenClick = new BoundingRect(this.engine.window.width-48, 310, 96, 170);
 
     this.engine.onMouseMove(event => {
-      if ( 
-        !this.hide && 
-        // this.originX === this.engine.window.width && 
-        this.invOpenClick.contains(event.pos) 
-      ) {
-        this.hoverInv = true;
-      } else {
-        this.hoverInv = false;
-      }
+      this.hoverInv = this._tabInteractive() && this.invOpenClick.contains(event.pos);
     });
 
     this.engine.onMouseDown(event => {
-      if ( event.button === "left" && this.hoverInv ) {
+      if ( event.button === "left" && this.hoverInv && this._tabInteractive() ) {
         this.engine.trigger("toggleInventory");
       }
     });
@@ -232,6 +224,17 @@ export default class InventoryMenu extends UIWindow {
 
     this.engine.trigger("openInventory");        // rebuild the grid's icon rects
     this.engine.trigger("saveRequested");
+  }
+
+  // The slide-out tab is live only when this panel is actually on-screen — i.e.
+  // REGISTERED in the engine (so it updates + draws) AND not hidden. The mouse
+  // listeners are attached at construction and fire even when the menu isn't
+  // registered (before the inventory is unlocked, or in a level), so without this
+  // gate, clicking the empty tab spot fired toggleInventory → a blank starfield
+  // you couldn't get out of. See Game.js: the menu is registered on first level
+  // start and, on reload, re-registered when `inventoryUnlocked` is restored.
+  _tabInteractive() {
+    return !this.hide && this.engine.gameObjects.all.indexOf(this) !== -1;
   }
 
   update() {
@@ -703,28 +706,31 @@ class Synthesis extends UIComponent {
   // White merge-flash on a machine's fuel slot (matches the inventory grid pulse).
   flashSlot(gem) { this.slotFlash[gem] = SLOT_FLASH_FRAMES; }
 
-  // A LOCKED synth. The body is a big BLUE padlock on a rectangle TINTED in the
-  // synth's gem colour (red/blue/yellow), and the small fuel slot below shows that
-  // synth's gem icon — together telling you which colour you're about to unlock.
-  // The frame brightens + glows when a blue key is hovering it.
+  // A LOCKED synth. The body is a big BLUE padlock on a BLUE rectangle — blue is
+  // the "needs a blue key" cue, so EVERY locked synth reads the same colour as the
+  // key that opens it (players were confused when a 2nd blue key met a red/yellow-
+  // framed lock and didn't realise it still applied). The synth's own colour lives
+  // only on the small fuel slot below (gem-tinted frame + that gem's icon), which
+  // tells you which colour you're about to unlock. Frame brightens + glows on hover.
   _drawLockedMachine(ctx, m, drag) {
     var BLUE = "#5b93ff";
-    var tint = SYNTH_TINT[m.gem] || BLUE;
+    var tint = SYNTH_TINT[m.gem] || BLUE;   // used only on the fuel slot below
     var r = m.body, sl = m.slot;
     var keyHover = drag && drag.name === "blueKey" && this.hoverMachine === m.gem;
     var gemIcon = this.engine.images.get(Item.list[m.gem].icon);
 
-    // Body — gem-colour-tinted rectangle with a large central padlock (no gem here).
+    // Body — uniformly BLUE rectangle (= the key colour) with a large central
+    // padlock (no gem here); the colour cue moves to the fuel slot below.
     ctx.save();
     ctx.fillStyle = "#0b0f17";
     ctx.fillRect(r.x, r.y, r.w, r.h);
-    ctx.globalAlpha = 0.3;                    // wash the rect in the gem colour
-    ctx.fillStyle = tint;
+    ctx.globalAlpha = 0.3;                    // wash the rect in the KEY colour (blue)
+    ctx.fillStyle = BLUE;
     ctx.fillRect(r.x, r.y, r.w, r.h);
     ctx.globalAlpha = 1;
     ctx.lineWidth = 2.5;
-    if ( keyHover ) { ctx.shadowColor = tint; ctx.shadowBlur = 12; }
-    ctx.strokeStyle = keyHover ? "#ffffff" : tint;
+    if ( keyHover ) { ctx.shadowColor = BLUE; ctx.shadowBlur = 12; }
+    ctx.strokeStyle = keyHover ? "#ffffff" : BLUE;
     ctx.strokeRect(r.x, r.y, r.w, r.h);
     ctx.shadowBlur = 0;
     ctx.restore();
@@ -1255,12 +1261,21 @@ class Equipment extends UIComponent {
 
   _drawEquipLock(ctx, r, hover, label) {
     var GREEN = "#3fe389";
+    // Mirror the locked-synth look (see _drawLockedMachine): dark base, a GREEN
+    // wash so the whole slot reads green, a bright green border, and a green glow
+    // on hover — green being the "needs a green key" cue, just as blue is for synths.
     ctx.save();
     ctx.fillStyle = "rgba(10,16,12,0.82)";
     ctx.fillRect(r.x, r.y, r.w, r.h);
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = hover ? GREEN : "#1f5a38";
+    ctx.globalAlpha = 0.3;                    // wash the slot in the KEY colour (green)
+    ctx.fillStyle = GREEN;
+    ctx.fillRect(r.x, r.y, r.w, r.h);
+    ctx.globalAlpha = 1;
+    ctx.lineWidth = 2.5;
+    if ( hover ) { ctx.shadowColor = GREEN; ctx.shadowBlur = 12; }
+    ctx.strokeStyle = hover ? "#ffffff" : GREEN;
     ctx.strokeRect(r.x, r.y, r.w, r.h);
+    ctx.shadowBlur = 0;
     ctx.restore();
     if ( label ) Text.draw(ctx, label, r.x + r.w / 2, r.y - 14,
       { fontSize: 11, fontColor: Equipment.HELPER_LABEL, center: true });

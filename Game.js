@@ -153,6 +153,12 @@ export default class Game {
             this.engine.sounds.playMusic("music");
           }
         });
+      } else if ( this.inventoryUnlocked ) {
+        // Prod: re-register the panel on reload if it was already unlocked (set by
+        // startGame, restored by _restoreSave above), so its slide-out tab is back
+        // without needing to replay a level. register() is idempotent, so a later
+        // startGame re-register is harmless.
+        this.engine.register(this.inventoryMenu);
       }
 
       this.engine.register(this.engine.globals.toolTip = new ToolTip(this.engine));
@@ -206,6 +212,15 @@ export default class Game {
       this.engine.on("openSettings", () => {
         this._priorMenuHide = this.menu.hide;
         this._priorInvHide = this.inventoryMenu.hide;
+        // Also snapshot the title/inventory SLIDE state. The modal is a blocking
+        // overlay, but onUpdate keeps running behind it — and the dev "Reset save
+        // data" button calls inventory.reset() → sort(), which fires openInventory
+        // and slides the inventory open + the title off-screen-left. Without this,
+        // Close would land in that broken in-between view (blank starfield). We
+        // restore the exact pre-Settings slide on close.
+        this._priorInvOriginX = this.inventoryMenu.originX;
+        this._priorInvSlide = this.invSlide;
+        this._priorInvLatch = this.invHide;
         this.menu.hide = true;
         this.inventoryMenu.hide = true;
         this.settingsScreen.rebuild();   // pick up a freshly-unlocked Credits button
@@ -215,6 +230,13 @@ export default class Game {
         this.settingsScreen.hide = true;
         this.menu.hide = this._priorMenuHide ?? false;
         this.inventoryMenu.hide = this._priorInvHide ?? true;
+        // Restore the slide/view state the modal may have disturbed (see above),
+        // so Close always returns to exactly where Settings was opened from.
+        if ( this._priorInvOriginX !== undefined ) {
+          this.inventoryMenu.originX = this._priorInvOriginX;
+          this.invSlide = this._priorInvSlide;
+          this.invHide = this._priorInvLatch;
+        }
       });
 
       this.invSlide = this.engine.prod ? 20 : -20;
@@ -229,6 +251,10 @@ export default class Game {
         this.engine.globals.base.on = true;
         this.engine.globals.spawner.start();
         this.engine.register(this.inventoryMenu);
+        // The synth/inventory panel is unlocked for good once you've started your
+        // first level. Persist it (see _snapshot/_restoreSave) so the slide-out
+        // tab is back on reload instead of silently vanishing until you replay.
+        this.inventoryUnlocked = true;
       });
 
       // Escape bails out of an in-progress level back to the menu (quick way to
@@ -670,6 +696,9 @@ export default class Game {
       // Victory crawl is a one-time thing — once seen, later final-level clears
       // skip straight to the reward.
       creditsSeen: !!this.creditsSeen,
+      // Has the synth/inventory panel been unlocked (first level started)? Persist
+      // it so the slide-out tab returns on reload (it's session-only otherwise).
+      inventoryUnlocked: !!this.inventoryUnlocked,
     };
   }
 
@@ -714,6 +743,14 @@ export default class Game {
     if ( typeof saved.creditsSeen === "boolean" ) {
       this.creditsSeen = saved.creditsSeen;
     }
+    // Inventory/synth panel availability. Older saves predate the flag, so derive
+    // it from any sign of progress (items, a key earned, a level past the first,
+    // or the crawl seen) — anyone who's played has earned the panel.
+    var progressed = (Array.isArray(saved.items) && saved.items.some(Boolean))
+      || (saved.keysAwarded && Object.keys(saved.keysAwarded).length > 0)
+      || (typeof saved.selectedLevel === "number" && saved.selectedLevel > 1)
+      || !!saved.creditsSeen;
+    this.inventoryUnlocked = saved.inventoryUnlocked ?? progressed;
     if ( saved.equipment ) {
       ["primary", "effect", "left", "leftEffect", "right", "rightEffect"].forEach(slot => {
         var name = saved.equipment[slot];
