@@ -224,7 +224,7 @@ export default class Game {
         var isFinalLevel = levels.selected >= levels.list.length;
         if ( isFinalLevel && !this.creditsSeen ) {
           this.creditsSeen = true;
-          this.creditsScreen.show();   // its onDone re-opens the menu when finished
+          this.creditsScreen.show(false);   // first-time victory crawl: UN-skippable; onDone re-opens the menu
         } else {
           this.menu.hide = false;
           this.inventoryMenu.hide = false;
@@ -268,11 +268,14 @@ export default class Game {
         this.menu.originX = this.inventoryMenu.originX - this.engine.window.width;
 
         // The title screen is a glass pane over the starfield — hide the idle
-        // base + flanking turrets while the menu is up so it floats over clean
-        // space (they reappear the moment a level starts).
-        var atMenu = !this.menu.hide;
-        this.engine.globals.base.hide = atMenu;
-        this.engine.getObjects("helper").forEach(hl => hl.hide = atMenu);
+        // base + flanking turrets while NOT in a level so the menu floats over
+        // clean space (they reappear the moment a level starts). Keyed off the
+        // base's own in-level flag, not "title menu hidden": a modal that force-
+        // hides the title (Settings, the Credits crawl) would otherwise read as
+        // "in a level" and reveal the shooter behind the settings overlay.
+        var inLevel = this.engine.globals.base.on;
+        this.engine.globals.base.hide = !inLevel;
+        this.engine.getObjects("helper").forEach(hl => hl.hide = !inLevel);
       });
 
       if ( this.engine.dev ) {

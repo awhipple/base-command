@@ -490,6 +490,15 @@ class Items extends UIComponent {
     this.hoverSort = this.sortRect.contains(event.pos);
     this.hoverRef = null;                 // cleared before rows run; the hovered row resets it
 
+    // Only the VISIBLE grid rectangle is a drop target. The grid builds maxRows
+    // (16) of hit-rects but shows iconRows (3), and the UIWindow dispatch walks
+    // ALL rows with an unbounded y — so a release on the glass below (or a
+    // scrolled-off row above) used to map onto a hidden row and the gem vanished
+    // into it. Gate to the on-screen band (the same bound onMouseWheel uses) so an
+    // off-grid release leaves hoverRef null and the gem snaps back. (X is already
+    // bounded: a column miss returns -1 from _colAt.)
+    if ( event.pos.y < 0 || event.pos.y > this.height ) return;
+
     event.relPos = event.pos;
     event.relPos.x -= this.menu.originX;
     this.menu.onMouseMove(event);
@@ -510,6 +519,10 @@ class Items extends UIComponent {
     if ( this.hoverSort ) {
       this.engine.globals.inventory.sort();
     }
+
+    // Same visible-grid gate as onMouseMove: a click on the glass off the grid
+    // must not pick up an item out of a scrolled-off / hidden row.
+    if ( event.pos.y < 0 || event.pos.y > this.height ) return;
 
     event.relPos = event.pos;
     event.relPos.x -= this.menu.originX;
@@ -1193,8 +1206,9 @@ class Equipment extends UIComponent {
       slot.hover = slot.contains(event.pos);
       if ( slot.hover ) {
         this.equipHover = key;
-        // Equip slots hold gems, which have no tooltip — use the weapon badge.
-        this.engine.globals.toolTipItem = null;
+        // Show the equipped gem's compact tooltip (name + tier) so you can read
+        // the tier of what's equipped. Empty slot → no tooltip.
+        this.engine.globals.toolTipItem = this.equipment[key] ?? null;
         return;
       }
       this.equipHover = null;

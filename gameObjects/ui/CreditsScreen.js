@@ -59,9 +59,12 @@ export default class CreditsScreen {
     this._exitFade = 0;
   }
 
-  // Start (or restart) the crawl.
-  show() {
+  // Start (or restart) the crawl. The FIRST-time victory crawl is played
+  // un-skippable (show(false)) so it's watched once through; replays from
+  // Settings → Credits pass the default (skippable).
+  show(skippable = true) {
     this._resetState();
+    this._skippable = skippable;
     this.hide = false;
   }
 
@@ -218,8 +221,9 @@ export default class CreditsScreen {
     // Perspective crawl.
     this._drawCrawl(ctx, sw, H);
 
-    // "tap to skip" hint, fading in after a beat.
-    if (!this._finishing) {
+    // "tap to skip" hint, fading in after a beat — only when skipping is allowed
+    // (suppressed on the first-time, un-skippable crawl).
+    if (!this._finishing && this._skippable) {
       var hintA = Math.max(0, Math.min(1, (this._t - this.HINT_DELAY) / 1.2)) * 0.5;
       if (hintA > 0) {
         ctx.globalAlpha = hintA;
@@ -286,6 +290,9 @@ export default class CreditsScreen {
   // ── Input: tap / click anywhere skips to the end ────────────────────────────
   onMouseClick() {
     if (this.hide) return true;
+    // First-time victory crawl: not skippable. Swallow the tap (so it can't leak
+    // to the menu beneath) but keep playing — it auto-finishes on its own.
+    if (!this._skippable) return false;
     // Ignore the very first moment so a leftover gameplay tap doesn't skip it.
     if (this._t < 0.6) return false;
     this._finish();

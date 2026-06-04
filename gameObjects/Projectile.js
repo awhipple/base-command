@@ -176,7 +176,13 @@ export default class Projectile extends GameObject {
   _marchHomingBeam(x, y, dir, enemies) {
     var STEP = 7;                                               // px per step
     var MAX = Math.ceil(Projectile.LASER_RANGE / STEP);
-    var turn = (this.options.homingTurn ?? 0.02) * (STEP / 5);  // rad/step (≈ projectile feel)
+    // The beam steers more GENTLY than a homing projectile of the same tier. A
+    // hit-scan beam that curved as hard as a projectile read as an auto-aim
+    // laser — it snapped onto enemies right out of the muzzle (worst at the
+    // start of the arc). Scaling the per-step turn down keeps homing as an
+    // assist, not a lock-on. Projectile homing (see update()) is unchanged.
+    var BEAM_TURN_SCALE = 0.45;
+    var turn = (this.options.homingTurn ?? 0.02) * (STEP / 5) * BEAM_TURN_SCALE;  // rad/step
     var CONE = Math.PI / 2;                                      // only home toward enemies ahead
     var W = this.engine.window.width, H = this.engine.window.height;
 

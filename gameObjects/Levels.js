@@ -52,8 +52,8 @@ export default class Levels {
       {
         enemies: 14,
         enemyType: "red",
-        spawnRate: 0.8,
-        enemyHp: 55,
+        spawnRate: 0.9,           // eased 0.8→0.9 (match neighbors) so red grunts don't pile up
+        enemyHp: 48,              // eased 55→48 to smooth the HP spike off level 4 (32)
         reward: "hourglass5", chance: 100,
         key: "blue",              // one-time: 3rd (last) synth
       },
