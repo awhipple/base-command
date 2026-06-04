@@ -47,11 +47,19 @@ export default class Spawner {
             lvl.enemyType ?? "green"),
           "enemy");
         } else {
-          this.engine.register(new Enemy(
+          // A level can specify a single `enemyType` OR an `enemyMix` array
+          // (random pick per spawn) for a varied wave of circle grunts.
+          var type = lvl.enemyMix
+            ? lvl.enemyMix[Math.floor(Math.random() * lvl.enemyMix.length)]
+            : lvl.enemyType;
+          // Green grunts ARE the blink-dodge "phaser" variant (its level-3
+          // identity), so green keeps its dodge in a mixed wave; white/red are plain.
+          var EnemyClass = (type === "green") ? Phaser : Enemy;
+          this.engine.register(new EnemyClass(
             this.engine,
             Math.random()*(this.engine.window.width+200)-100, -20,
             lvl.enemyHp,
-            lvl.enemyType),
+            type),
           "enemy");
         }
       }
@@ -64,6 +72,7 @@ export default class Spawner {
         this.engine.register(new Boss(this.engine, this.engine.globals.levels.current.bossHp ?? 2200, boss), "enemy");
         this.spawnBoss = false;
         this.delayReward = 5;
+        this.engine.trigger("bossSpawned");   // swap the main theme for the boss theme
       } else {
         this.engine.globals.base.on = false;
         

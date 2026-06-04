@@ -33,7 +33,11 @@ export default class CreditsScreen {
   FADE_HI   = 0.60;   // band scale at/above which text is fully opaque
   FADE_LO   = 0.22;   // band scale at/below which text has faded to nothing
   HINT_DELAY = 3.5;   // seconds before the "tap to skip" hint fades in
-  FINISH_PAD = 1200;  // extra depth past the last line before auto-finishing
+  // Depth past the last line before auto-finishing. The line reaches full
+  // transparency around ~1160; 900 ends as it's fading to a faint wisp (the 0.5s
+  // fade-to-black covers the rest) instead of lingering on near-invisible text +
+  // empty stars. Raise to end later, lower to end sooner.
+  FINISH_PAD = 900;
 
   constructor(engine, opts = {}) {
     this.engine = engine;
@@ -66,6 +70,7 @@ export default class CreditsScreen {
     this._resetState();
     this._skippable = skippable;
     this.hide = false;
+    this.engine.sounds.playMusic("credits");   // boss/main theme crossfades to the credits theme
   }
 
   // ── Star-Wars crawl content ────────────────────────────────────────────────
@@ -183,6 +188,7 @@ export default class CreditsScreen {
   _finish() {
     if (this._finishing) return;
     this._finishing = true;
+    this.engine.sounds.fadeOutMusic({ fade: 1.5 });   // credits music fades as the crawl ends
   }
 
   update() {

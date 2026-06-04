@@ -71,9 +71,15 @@ export default class Levels {
         icon: engine.images.get("dragon-purple"),
         enemies: 25,
         spawnRate: 0.75,
+        // Final wave: a MIX of the three circle grunts (white / green / red).
         // Hard but finishable: ~tier 8-9 gems in EVERY slot (you + both helpers).
-        // At ~0.75s spawns this is ~200 HP/s incoming, near a maxed build's DPS.
-        enemyHp: 150,
+        // GREEN spawns as the blink-dodge phaser (its level-3 identity — ghosts +
+        // slides aside on a non-lethal hit); RED splits into two half-HP whites on
+        // death. The dodges + splits make a mixed wave bite harder than pure white
+        // at equal HP, so enemyHp is dropped 150→100 to keep it beatable (≈3.3k
+        // effective HP + green evasion ≈ the old all-white 150 wave).
+        enemyMix: ["white", "green", "red"],
+        enemyHp: 100,
         boss: "purple",
         bossHp: 5000,            // the end boss: big (5× the green boss) but not a 40s slog
         reward: "hourglass7", chance: 100,
@@ -110,7 +116,22 @@ export default class Levels {
       this.keysAwarded[this._selected] = true;
       var keyItem = this.engine.globals.inventory.add(this.current.key === "blue" ? "blueKey" : "greenKey");
       var eng = this.engine;
-      setTimeout(() => eng.trigger("displayReward", keyItem), 850);
+      // A KEY is a one-time slot-unlock, not the repeatable energy cell — give it
+      // a LOUDER pop so it doesn't read as "just a second gem": bigger icon, a
+      // punch-in, key-coloured pulse rings, a longer dwell, and a "NEW KEY!"
+      // caption. Its own chime (850ms after the victory chime) flags the bonus.
+      var ringColor = this.current.key === "blue" ? "#5b93ff" : "#3fe389";
+      setTimeout(() => {
+        eng.sounds.play("chime", { volume: 0.6 });
+        eng.trigger("displayReward", keyItem, {
+          caption: "NEW KEY!",
+          ringColor,
+          scale: 1.45,
+          time: 1.9,
+          slideAt: 0.75,
+          popIn: true,
+        });
+      }, 850);
       this.engine.trigger("saveRequested");
     }
   }

@@ -2,6 +2,8 @@ import Enemy from "./Enemy.js";
 import { explosion } from "./effects/Particle Effects.js";
 
 export default class Boss extends Enemy {
+  slideIn = false;   // the dragon's entrance is scripted (_setDest), not a slide-in
+
   // Health-bar fill colours per dragon type.
   static BAR_COLORS = {
     purple: { bright: "#c98bff", dark: "#5a1f9e" },
@@ -109,6 +111,15 @@ export default class Boss extends Enemy {
 
   startExplode() {
     this.on = false;
+
+    // The dragon's dead — drop every fireball still in flight. Otherwise they
+    // keep coasting and can still kill the player after the kill, and (because
+    // fireballs are "enemy" objects) they'd stall the victory trigger until
+    // they fly off-screen.
+    this.engine.getObjects("enemy").forEach(e => {
+      if ( e.type === "fireBall" ) this.engine.unregister(e);
+    });
+
     var makeExplosion = (options = {}) => {
       var rad = Math.random()*Math.PI*2;
         var dist = options.center ? 0 : Math.random()*50;

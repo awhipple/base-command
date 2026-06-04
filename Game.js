@@ -20,7 +20,10 @@ import { whiteCircle, blueCircle } from "./gameObjects/effects/ParticleSprites.j
 import SettingsScreen from "./gameObjects/ui/SettingsScreen.js";
 import CreditsScreen from "./gameObjects/ui/CreditsScreen.js";
 import Starfield from "./gameObjects/effects/Starfield.js";
+import DeathSequence from "./gameObjects/effects/DeathSequence.js";
 import * as SaveStore from "./gameObjects/SaveStore.js";
+import Particle from "./engine/gfx/shapes/Particle.js";
+import DeathSound from "./engine/DeathSound.js";
 
 export default class Game {
   constructor(options = {}) {
@@ -43,9 +46,22 @@ export default class Game {
     ]);
     this.engine.sounds.preload([
       "shot", "spark", "explosion", "chime", "zap", "fireball",
-      "tsuwami_generic-fighting-game-music.mp3"
+      // Original soundtrack: main theme (title + levels), boss, and credits crawl.
+      "music.mp3", "boss.mp3", "credits.mp3"
     ]);
-    this.engine.sounds.alias("music", "tsuwami_generic-fighting-game-music");
+
+    // Audio volumes persist in their OWN key (not the versioned save), so a reset
+    // or version bump never wipes them. Dev starts MUSIC silent (quiet while
+    // working); SFX and prod-music start full. Both are slider-adjustable.
+    var audioPrefs = this._loadAudioPrefs();
+    this.engine.sounds.musicVolume = audioPrefs.music;
+    this.engine.sounds.sfxVolume = audioPrefs.sfx;
+
+    // Enemy-death "pop" is synthesized (WebAudio), not a sample — see DeathSound.
+    // Registered as a synth so any `sounds.play("death", …)` routes to it and the
+    // SFX slider still applies.
+    var deathSound = new DeathSound();
+    this.engine.sounds.registerSynth("death", (vol) => deathSound.play(vol));
 
     ["white", "blue", "yellow"].forEach(color => {
       this.engine.images.save(this.generateCircleImage(20, color), color + "-circle");
@@ -85,9 +101,10 @@ export default class Game {
     this.engine.globals.levels = new Levels(this.engine);
 
     this.engine.load().then(() => {
-      if ( this.engine.prod ) {
-        this.engine.on("firstInteraction", () => this.engine.sounds.play("music", {loop: true, volume: 0.6}));
-      }
+      // Main theme starts (looping) on the first tap — the gesture that unlocks
+      // browser audio. Loudness is the musicVolume master (0 in dev by default),
+      // so raising the Music slider brings it in, even in dev.
+      this.engine.on("firstInteraction", () => this.engine.sounds.playMusic("music"));
 
       this.engine.images.save(this.generateColoredImage(this.engine.images.get("dragon-green")), "dragon-flash");
 
@@ -133,7 +150,7 @@ export default class Game {
         this.engine.register(this.inventoryMenu);
         this.engine.onKeyDown(evt => {
           if ( evt.key === "m" ) {
-            this.engine.sounds.play("music", { loop: true });
+            this.engine.sounds.playMusic("music");
           }
         });
       }
@@ -165,6 +182,12 @@ export default class Game {
           this.settingsScreen.hide = true;   // dismiss the modal...
           this.creditsScreen.show();          // ...and replay the crawl (onDone reopens the menu)
         },
+        // Audio sliders — live-set the master volumes; persist on release.
+        musicVol: () => this.engine.sounds.musicVolume,
+        sfxVol:   () => this.engine.sounds.sfxVolume,
+        onMusicVol: (v) => this.engine.sounds.setMusicVolume(v),
+        onSfxVol:   (v) => this.engine.sounds.setSfxVolume(v),
+        onAudioCommit: () => this._saveAudioPrefs(),
       });
       this.engine.register(this.settingsScreen);
 
@@ -175,6 +198,7 @@ export default class Game {
         onDone: () => {
           this.menu.hide = false;
           this.inventoryMenu.hide = false;
+          this.engine.sounds.playMusic("music");   // crawl over → back to the main theme
         },
       });
       this.engine.register(this.creditsScreen);
@@ -197,7 +221,7 @@ export default class Game {
 
       this.engine.register(new GameUI(this.engine));
 
-      this.engine.on("enemyCollide", () => this._exitLevel());
+      this.engine.on("enemyCollide", () => this._onPlayerDeath());
 
       this.engine.on("startGame", () => {
         this.menu.hide = true;
@@ -210,11 +234,18 @@ export default class Game {
       // Escape bails out of an in-progress level back to the menu (quick way to
       // test a gem/weapon then exit).
       this.engine.onKeyDown(evt => {
-        if ( evt.key === "Escape" && this.engine.globals.base.on ) this._exitLevel();
+        // Engine key names come from KeyNames (Enums.js): Escape is "esc", NOT the
+        // DOM "Escape". Holding it self-guards — _exitLevel clears base.on.
+        if ( evt.key === "esc" && this.engine.globals.base.on ) this._exitLevel();
       });
+
+      // Boss appears → switch to the boss theme. The main theme returns when the
+      // level is won (levelWin) or you bail out (_exitLevel), the boss fading out.
+      this.engine.on("bossSpawned", () => this.engine.sounds.playMusic("boss"));
 
       this.engine.on("levelWin", () => {
         this.engine.unregister("projectile");
+        this._clearParticles();
 
         // Beating the LAST level for the FIRST time rolls the victory crawl
         // instead of dropping straight back to the menu. Every later clear just
@@ -228,6 +259,7 @@ export default class Game {
         } else {
           this.menu.hide = false;
           this.inventoryMenu.hide = false;
+          this.engine.sounds.playMusic("music");   // boss/level theme fades back to main
         }
         this.engine.trigger("saveRequested");
       });
@@ -249,8 +281,8 @@ export default class Game {
         }
       })
 
-      this.engine.on("displayReward", (item) => {
-        this.engine.register(new Reward(this.engine, item));
+      this.engine.on("displayReward", (item, opts) => {
+        this.engine.register(new Reward(this.engine, item, opts));
       });
 
       this.engine.onUpdate(() => {
@@ -273,9 +305,13 @@ export default class Game {
         // base's own in-level flag, not "title menu hidden": a modal that force-
         // hides the title (Settings, the Credits crawl) would otherwise read as
         // "in a level" and reveal the shooter behind the settings overlay.
-        var inLevel = this.engine.globals.base.on;
-        this.engine.globals.base.hide = !inLevel;
-        this.engine.getObjects("helper").forEach(hl => hl.hide = !inLevel);
+        // While the death cinematic is playing, IT owns the base + turret
+        // visibility (they collapse into the black hole), so don't fight it here.
+        if ( !this.dying ) {
+          var inLevel = this.engine.globals.base.on;
+          this.engine.globals.base.hide = !inLevel;
+          this.engine.getObjects("helper").forEach(hl => hl.hide = !inLevel);
+        }
       });
 
       if ( this.engine.dev ) {
@@ -516,15 +552,94 @@ export default class Game {
     return new Image(can);
   }
 
+  // The player just died (an enemy reached the base). Instead of snapping
+  // straight back to the title, play the singularity-collapse cinematic
+  // (DeathSequence) — the base + every on-screen enemy get dragged into a black
+  // hole that then detonates — and only return to the menu when it's done.
+  _onPlayerDeath() {
+    if ( this.dying ) return;          // re-entrancy guard (many enemies can hit at once)
+    this.dying = true;
+
+    var base = this.engine.globals.base;
+    base.on = false;                   // freeze the turret (stops it firing mid-collapse)
+    this.engine.globals.spawner.reset();
+    this.engine.unregister("projectile");
+
+    // Hand the LIVE enemy objects to the cinematic — it freezes each one and
+    // drags its real sprite spiralling into the hole (rather than snapshotting +
+    // deleting them, which made them vanish instantly).
+    var enemies = this.engine.getObjects("enemy");
+
+    // Centre the hole on the base/turret, lifted off the very bottom edge so the
+    // accretion disk reads fully on-screen.
+    var hx = base.x;
+    var hy = Math.min(base.y, this.engine.window.height - 48);
+
+    // If the cinematic ever fails to construct, fall straight back to the title
+    // rather than leaving the game stuck mid-level.
+    try {
+      this.engine.register(new DeathSequence(this.engine, hx, hy, {
+        enemies,
+        onDone: () => {
+          this.dying = false;
+          this._exitLevel();
+        },
+      }));
+    } catch ( err ) {
+      console.error("DeathSequence failed to start — exiting level directly:", err);
+      this.dying = false;
+      this._exitLevel();
+    }
+  }
+
   // Tear down the current level and return to the menu (death or Escape).
   _exitLevel() {
     this.menu.hide = false;
     this.inventoryMenu.hide = false;
     this.engine.unregister("enemy");
     this.engine.unregister("projectile");
+    this._clearParticles();
     this.engine.globals.base.on = false;
     this.engine.globals.spawner.reset();
+    this.engine.sounds.playMusic("music");   // back to the main theme (boss fades out)
     this.engine.trigger("saveRequested");
+  }
+
+  // Drop any transient particles still in flight (shot trails, explosion +
+  // death-burst smoke, the death cinematic's debris) when a level ends.
+  // Particles are flushed in a post-pass that always draws ON TOP of everything
+  // (see GameWindow.draw → Particle.drawQueuedParticles), so left alone they'd
+  // keep animating over the title-screen glass and break the "glass over the
+  // level" look. Clearing them is the cleanest way to keep them out from in
+  // front of the glass.
+  _clearParticles() {
+    this.engine.gameObjects.all
+      .filter(o => o instanceof Particle)
+      .forEach(o => this.engine.unregister(o));
+  }
+
+  // Audio prefs live in their OWN localStorage key (not the versioned game save),
+  // so a save reset / version bump leaves your volumes intact. Dev defaults music
+  // to 0 (quiet while working); SFX + prod-music default to full.
+  _loadAudioPrefs() {
+    var def = { music: this.engine.dev ? 0 : 1, sfx: 1 };
+    try {
+      var raw = localStorage.getItem("base-command:audio");
+      if ( raw ) {
+        var v = JSON.parse(raw);
+        return { music: v.music ?? def.music, sfx: v.sfx ?? def.sfx };
+      }
+    } catch (e) {}
+    return def;
+  }
+
+  _saveAudioPrefs() {
+    try {
+      localStorage.setItem("base-command:audio", JSON.stringify({
+        music: this.engine.sounds.musicVolume,
+        sfx: this.engine.sounds.sfxVolume,
+      }));
+    } catch (e) {}
   }
 
   _snapshot() {

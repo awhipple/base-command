@@ -2,6 +2,8 @@ import UIWindow from "../../engine/gfx/ui/window/index.js";
 import Button from "../../engine/gfx/ui/window/components/Button.js";
 import Banner from "./Banner.js";
 import { BoundingRect } from "../../engine/GameMath.js";
+import { UIComponent } from "../../engine/gfx/ui/window/UIComponent.js";
+import Text from "../../engine/gfx/Text.js";
 
 // A button whose label is re-read each draw from options.labelFn — lets the
 // "Unlock all" cheat flip its own text to "Unlocked" after it's used.
@@ -41,6 +43,127 @@ class DangerButton extends Button {
   }
 }
 
+// A horizontal volume slider with an icon (music note / speaker). Click or drag
+// anywhere on the track to set 0..1 — onChange fires live while dragging, onCommit
+// once on release. Value is re-read from getValue() each frame so it always
+// reflects the live master volume.
+class Slider extends UIComponent {
+  constructor(engine, options = {}) {
+    super(engine);
+    this.options = options;
+    this.glyph = options.glyph;                 // "music" | "sfx"
+    this.accent = options.accent ?? "#7dd3fc";
+    this.height = 50;
+  }
+
+  initialize() {
+    super.initialize();
+    var left = 60, right = 70;                  // room for the icon + the % readout
+    this.track = new BoundingRect(left, this.height / 2 - 5, this.suggestedWidth - left - right, 10);
+    this.value = this.options.getValue ? this.options.getValue() : 1;
+  }
+
+  _setFromX(x) {
+    this.value = Math.max(0, Math.min(1, (x - this.track.x) / this.track.w));
+    this.options.onChange && this.options.onChange(this.value);
+  }
+
+  _onTrack(pos) {
+    return pos.y >= 0 && pos.y <= this.height &&
+           pos.x >= this.track.x - 14 && pos.x <= this.track.x + this.track.w + 16;
+  }
+
+  onMouseClick(event) {
+    if ( this._onTrack(event.pos) ) { this.dragging = true; this._setFromX(event.pos.x); }
+  }
+
+  onMouseMove(event) {
+    if ( this.dragging ) this._setFromX(event.pos.x);
+  }
+
+  onMouseUp() {
+    if ( this.dragging ) {
+      this.dragging = false;
+      this.options.onCommit && this.options.onCommit(this.value);
+    }
+  }
+
+  hide() { this.dragging = false; }
+
+  update() {
+    if ( this.dragging ) this.engine.cursor = "pointer";
+  }
+
+  drawComponent() {
+    var ctx = this.ctx, t = this.track;
+    if ( !this.dragging && this.options.getValue ) this.value = this.options.getValue();
+    var muted = this.value <= 0.001;
+
+    this._drawGlyph(ctx, 16, this.height / 2, muted);
+
+    ctx.fillStyle = "#1d2740";
+    this._round(ctx, t.x, t.y, t.w, t.h, 5); ctx.fill();
+    ctx.fillStyle = muted ? "#475068" : this.accent;
+    this._round(ctx, t.x, t.y, t.w * this.value, t.h, 5); ctx.fill();
+
+    var hx = t.x + t.w * this.value, hy = t.y + t.h / 2;
+    ctx.fillStyle = "#eaf6ff";
+    ctx.beginPath(); ctx.arc(hx, hy, 9, 0, Math.PI * 2); ctx.fill();
+    ctx.lineWidth = 2; ctx.strokeStyle = muted ? "#475068" : this.accent; ctx.stroke();
+
+    Text.draw(ctx, Math.round(this.value * 100) + "%", t.x + t.w + 36, hy - 1,
+      { fontSize: 14, fontColor: "#9aa7c2", center: true });
+  }
+
+  _round(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    if ( w <= 0 ) return;
+    r = Math.min(r, w / 2, h / 2);
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  // Little vector glyph: an eighth note (music) or a speaker + waves / mute-X (sfx).
+  _drawGlyph(ctx, cx, cy, muted) {
+    var col = muted ? "#5f6b82" : "#cfe0ff";
+    ctx.save();
+    ctx.fillStyle = col; ctx.strokeStyle = col; ctx.lineWidth = 2;
+    ctx.lineCap = "round"; ctx.lineJoin = "round";
+    if ( this.glyph === "music" ) {
+      ctx.beginPath();
+      ctx.ellipse(cx - 4, cy + 7, 5, 3.6, -0.35, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(cx + 0.8, cy + 6); ctx.lineTo(cx + 0.8, cy - 9); ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(cx + 0.8, cy - 9);
+      ctx.quadraticCurveTo(cx + 9, cy - 7, cx + 6, cy - 1); ctx.stroke();
+    } else {
+      ctx.beginPath();
+      ctx.moveTo(cx - 9, cy - 3.5);
+      ctx.lineTo(cx - 4, cy - 3.5);
+      ctx.lineTo(cx + 1, cy - 8);
+      ctx.lineTo(cx + 1, cy + 8);
+      ctx.lineTo(cx - 4, cy + 3.5);
+      ctx.lineTo(cx - 9, cy + 3.5);
+      ctx.closePath(); ctx.fill();
+      if ( muted ) {
+        ctx.beginPath();
+        ctx.moveTo(cx + 5, cy - 5); ctx.lineTo(cx + 12, cy + 5);
+        ctx.moveTo(cx + 12, cy - 5); ctx.lineTo(cx + 5, cy + 5); ctx.stroke();
+      } else {
+        ctx.beginPath(); ctx.arc(cx + 3, cy, 5, -0.8, 0.8); ctx.stroke();
+        ctx.beginPath(); ctx.arc(cx + 3, cy, 9, -0.7, 0.7); ctx.stroke();
+      }
+    }
+    ctx.restore();
+  }
+}
+
 export default class SettingsScreen extends UIWindow {
   constructor(engine, opts = {}) {
     var w = Math.min(480, engine.window.width - 40);
@@ -61,7 +184,26 @@ export default class SettingsScreen extends UIWindow {
           fontColor: "#9aa7c2",
           center: true,
         },
-        { type: "spacer", height: 30 },
+        { type: "spacer", height: 14 },
+        // Audio: Music + Sound-effects volume sliders (drag the handle; 0 = mute).
+        {
+          type: Slider,
+          glyph: "music",
+          accent: "#7dd3fc",
+          getValue: () => opts.musicVol ? opts.musicVol() : 1,
+          onChange: (v) => opts.onMusicVol && opts.onMusicVol(v),
+          onCommit: () => opts.onAudioCommit && opts.onAudioCommit(),
+        },
+        {
+          type: Slider,
+          glyph: "sfx",
+          accent: "#7ee787",
+          getValue: () => opts.sfxVol ? opts.sfxVol() : 1,
+          onChange: (v) => opts.onSfxVol && opts.onSfxVol(v),
+          // Test blip on release so you hear the new SFX level.
+          onCommit: () => { opts.onAudioCommit && opts.onAudioCommit(); engine.sounds.play("zap"); },
+        },
+        { type: "spacer", height: 18 },
         {
           type: DangerButton,
           text: { button: "Reset save data" },
@@ -80,8 +222,9 @@ export default class SettingsScreen extends UIWindow {
         },
       ];
 
-      // Replay the victory crawl (unlocked by beating the last level).
-      if ( showCredits ) {
+      // Replay the victory crawl — unlocked by beating the last level, but
+      // always available in dev mode (so the crawl is easy to test).
+      if ( showCredits || opts.dev ) {
         components.push({ type: "spacer", height: 16 });
         components.push({
           type: "button",
@@ -148,7 +291,7 @@ export default class SettingsScreen extends UIWindow {
     };
 
     var heightFor = (showCredits) =>
-      (opts.dev ? 564 : 360) + (showCredits ? 64 : 0);
+      (opts.dev ? 714 : 510) + ((showCredits || opts.dev) ? 64 : 0);   // +150 for the two audio sliders
 
     var showCredits0 = !!opts.showCredits?.();
 

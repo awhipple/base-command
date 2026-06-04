@@ -17,6 +17,14 @@ export const ENEMY_PALETTE = {
 };
 
 export default class Enemy extends GameObject {
+  // Slide-in: a circular grunt spawned off-screen rushes ONTO the screen fast,
+  // then eases back to its normal slow crawl once fully visible — so an
+  // over-leveled build that snipes enemies before they arrive still lets you SEE
+  // them come in. Strafers never call Enemy.update; the Boss opts out (slideIn).
+  static SLIDE_BOOST = 2.5;   // extra speed while sliding in (entry = (1+this)× crawl)
+  static SLIDE_DECAY = 0.90;  // per-frame easing of the boost once on-screen → 1× crawl
+  slideIn = true;             // Boss overrides to false (its entrance is scripted)
+
   constructor(engine, x, y, hp, type = "white", initialXv = 0) {
     super(engine, {
       x: x,
@@ -49,7 +57,7 @@ export default class Enemy extends GameObject {
         // Debris burst in the enemy's colour so deaths read as a little explosion.
         var palette = ENEMY_PALETTE[this.type] || ENEMY_PALETTE.white;
         this.engine.register(deathBurst(this.x, this.y, palette.glow));
-        this.engine.sounds.play("spark");
+        this.engine.sounds.play("death", { volume: 0.6 });   // synth'd pop (DeathSound); deaths overlap, so kept soft
         this.engine.unregister(this);
       }
 
@@ -87,8 +95,20 @@ export default class Enemy extends GameObject {
   }
 
   update() {
-    this.x += this.xv + this.initialXv;
-    this.y += this.yv;
+    // Slide-in boost — lazy-init on the first update so subclass instance fields
+    // (e.g. the Boss's slideIn=false) are already applied. While the grunt is
+    // still off-screen it rushes in at (1+SLIDE_BOOST)× speed; once it's fully
+    // on-screen the boost eases away so it settles to the normal slow crawl.
+    if ( this.slideBoost === undefined ) {
+      this.slideBoost = (this.slideIn && !this._onScreen()) ? Enemy.SLIDE_BOOST : 0;
+    }
+    var mult = 1 + this.slideBoost;
+    this.x += this.xv * mult + this.initialXv;
+    this.y += this.yv * mult;
+    if ( this.slideBoost > 0 && this._onScreen() ) {
+      this.slideBoost *= Enemy.SLIDE_DECAY;
+      if ( this.slideBoost < 0.05 ) this.slideBoost = 0;
+    }
 
     this.initialXv *= 0.9;
     var absInitialXv = Math.abs(this.initialXv);
@@ -126,6 +146,13 @@ export default class Enemy extends GameObject {
         ));
       }
     }
+  }
+
+  // Fully on-screen = bounding circle inside the side walls and below the top
+  // edge. Drives the slide-in (fast until visible, then ease to the slow crawl).
+  _onScreen() {
+    var r = this.rect.w / 2;
+    return this.x > r && this.x < this.engine.window.width - r && this.y > r;
   }
 
   unregister() {
@@ -172,7 +199,7 @@ export default class Enemy extends GameObject {
     ctx.stroke();
     ctx.restore();
 
-    if ( !opts.noHp ) {
+    if ( !opts.noHp && !this.captured ) {
       ctx.save();
       ctx.font = "bold 36px Lucida Console, Menlo, monospace";
       ctx.textAlign = "center";

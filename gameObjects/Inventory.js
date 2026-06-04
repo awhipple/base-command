@@ -65,7 +65,16 @@ export default class Inventory {
 
   sort() {
     this.items = this.items.filter(item => item);
-    this.items.sort((a, b) => a.type === b.type ? (a.name < b.name ? 1 : -1) : (a.type < b.type ? 1 : -1));
+    // Group by type, then colour, then HIGHEST TIER FIRST. Tier must be compared
+    // numerically (b.tier - a.tier), not by name string — name-sorting put "…10"
+    // between "…1" and "…2" alphabetically, so tier-10 gems landed in the wrong
+    // spot. Equal-tier ties fall back to name for a stable order.
+    this.items.sort((a, b) => {
+      if ( a.type !== b.type ) return a.type < b.type ? 1 : -1;
+      if ( (a.color ?? "") !== (b.color ?? "") ) return (a.color ?? "") < (b.color ?? "") ? 1 : -1;
+      if ( a.tier !== b.tier ) return b.tier - a.tier;
+      return a.name < b.name ? 1 : -1;
+    });
     this.engine.trigger("openInventory"); // Clear the inv menu and refreshes it
     this.engine.trigger("saveRequested");
   }

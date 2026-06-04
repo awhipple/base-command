@@ -168,7 +168,7 @@ export default class Strafer extends Enemy {
     ctx.stroke();
     ctx.restore();
 
-    if ( opts.noHp ) return;
+    if ( opts.noHp || this.captured ) return;
 
     // HP text, upright (matches Enemy)
     ctx.save();

@@ -5,6 +5,19 @@ export default class Particle extends GameObject {
   static drawQueue = [];
   static particleColorMap = {};
   static partSheets = [];
+
+  // Named easings for the optional `ease` option (see constructor). `in*` start
+  // slow + accelerate (good for "pulled in by gravity"); `out*` start fast +
+  // decelerate (good for a burst that settles); `inOut` is a smoothstep.
+  static EASING = {
+    linear:  t => t,
+    inQuad:  t => t * t,
+    inCubic: t => t * t * t,
+    inQuart: t => t * t * t * t,
+    outQuad: t => 1 - (1 - t) * (1 - t),
+    outCubic: t => 1 - Math.pow(1 - t, 3),
+    inOut:   t => t * t * (3 - 2 * t),
+  };
   
   z = 1000;
 
@@ -17,6 +30,14 @@ export default class Particle extends GameObject {
 
     this.time = 0;
     this.lifeSpan = options.lifeSpan ?? 1;
+
+    // Optional easing: remaps the 0→1 life fraction before the start→end interp,
+    // so motion can accelerate/decelerate instead of moving at a constant rate.
+    // `ease` is a function (t→t) or a key into Particle.EASING. Default = linear
+    // (every existing effect passes no `ease`, so they're unaffected).
+    this.ease = typeof options.ease === "function"
+      ? options.ease
+      : (options.ease ? Particle.EASING[options.ease] : null);
 
     this.optimizeColorTransitions = options.optimizeColorTransitions ?? true;
     if ( this.optimizeColorTransitions ) {
@@ -87,9 +108,10 @@ export default class Particle extends GameObject {
   }
 
   _generateDeltaState(delta) {
+    var d = this.ease ? this.ease(delta < 0 ? 0 : delta > 1 ? 1 : delta) : delta;
     var newDeltaState = {};
     for ( var key in this.stateDelta ) {
-      newDeltaState[key] = this.initial[key] + this.stateDelta[key] * delta;
+      newDeltaState[key] = this.initial[key] + this.stateDelta[key] * d;
     }
     return newDeltaState;
   }
