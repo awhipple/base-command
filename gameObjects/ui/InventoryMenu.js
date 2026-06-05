@@ -20,18 +20,24 @@ import Banner from "./Banner.js";
 // GEN_SECONDS = fuel per output gem. Higher OUTPUT level costs proportionally
 // more (bigger gem, ~flat rate). All tunable, pending the design pass.
 const GEN_SECONDS = 60;         // fuel per gem
-const IDLE_FUEL_PER_TIER = 0.5;   // a loaded gem idles at tier × this fuel/sec (T1=0.5/s, T2=1/s…)
-// NOTE: keep this a power-of-two fraction (0.25, 0.5, …) so tier × it stays an
-// exactly-representable float and the integer sub-fuel accounting never drifts.
 
-// EXACT accounting. Fuel is tracked in integer "sub-fuel" units (1 fuel =
-// FUEL_SCALE sub-fuel) so per-frame accumulation never drifts: at 60fps the
-// per-frame idle drip is `idleFuel/sec` sub-fuel and a burning hourglass drains
-// its `rate` sub-fuel/frame — both whole numbers given integer GEN_SECONDS /
-// IDLE_FUEL_PER_TIER / HOURGLASS_FUEL / BURST_SECONDS. A gem costs an integer
-// number of sub-fuel, so `fuel >= cost` is exact: N hourglasses convert to a
-// deterministic number of gems with no floating-point fuzz at the boundary.
-const FUEL_SCALE = 60;          // sub-fuel per fuel (== fps, so per-frame drips are whole)
+// Idle fuel/s a loaded gem feeds its synth, by gem tier (1-indexed). An accelerating
+// ramp: each tier's jump is 0.1 bigger than the last (jumps 0.6, 0.7, 0.8 … 1.3),
+// with T10 rounded up from 9.5 to a clean 10.0/s. Hand-tuned table (NOT tier × a
+// constant) so the curve can be shaped per tier.
+export const IDLE_FUEL_BY_TIER = [0.5, 1.1, 1.8, 2.6, 3.5, 4.5, 5.6, 6.8, 8.1, 10.0];
+export function idleFuelForTier(tier) {
+  var i = Math.max(1, Math.min(IDLE_FUEL_BY_TIER.length, tier || 1)) - 1;
+  return IDLE_FUEL_BY_TIER[i];
+}
+
+// Fuel is tracked in "sub-fuel" units (1 fuel = FUEL_SCALE sub-fuel). The BURST path
+// stays EXACT: at 60fps a burning hourglass drains its `rate` (integer HOURGLASS_FUEL)
+// sub-fuel/frame and a gem costs an integer number of sub-fuel, so burst `fuel >= cost`
+// is exact — N hourglasses convert to a deterministic gem count with no boundary fuzz.
+// The IDLE drip (idleFuelForTier, now in tenths) accrues with negligible float fuzz;
+// fine for the slow idle path, and it never affects burst→gem determinism.
+const FUEL_SCALE = 60;          // sub-fuel per fuel (== fps)
 
 // Machine leveling: each machine produces levelGems(level) gems at its own `level`
 // (output tier), filling the yellow XP bar, then bumps to the next tier — a bigger
@@ -83,7 +89,7 @@ export default class InventoryMenu extends UIWindow {
       },
       {
         type: Banner,
-        text: "Items",
+        text: "Arsenal",
         fontSize: 40,
         fontColor: "#7dd3fc",
         center: true
@@ -169,6 +175,12 @@ export default class InventoryMenu extends UIWindow {
     var inv = this.engine.globals.inventory;
     var src = this.engine.globals.dragSource;
 
+    // Onboarding rails: while the tutorial coach is walking the player through a
+    // step, it only permits that step's intended drag (everything else snaps back),
+    // so the guided flow can't be forked off. No-op once the tutorial is done.
+    var tut = this.engine.globals.tutorial;
+    if ( tut && !tut.allowDrop(drag, this._dropTarget(drag)) ) return;
+
     // An hourglass (boost) dropped on a synth MACHINE is BURNED for a fuel burst —
     // a special action, not a slot move. Checked first so a boost over the synth
     // always burns (boosts can still merge/rearrange when dropped on the grid).
@@ -217,13 +229,36 @@ export default class InventoryMenu extends UIWindow {
       if ( target.kind === "equip" ) this._equip.flashSlot(target.slot);
       else if ( target.kind === "synth" ) this._synth.flashSlot(target.slot);
       else if ( target.kind === "inv" ) this._items.flashSlot(target.index);
-      this.engine.trigger("itemsMerged");
+      this.engine.trigger("itemsMerged", res.item);
     } else if ( target.kind === "equip" ) {
       this.engine.trigger("itemEquipped");   // move/swap into an equip slot
     }
 
     this.engine.trigger("openInventory");        // rebuild the grid's icon rects
     this.engine.trigger("saveRequested");
+  }
+
+  // Normalised descriptor of what a drop WOULD do, for the tutorial's drop-gating.
+  // Mirrors _resolveDrop's target selection (boost→synth burn = "fuel"; key→lock =
+  // "unlockSynth"/"unlockEquip"; otherwise the hovered slot ref). null = nowhere.
+  _dropTarget(drag) {
+    var inv = this.engine.globals.inventory;
+    if ( drag.type === "boost" && this._synth && this._synth.hoverMachine && !inv.isLocked(this._synth.hoverMachine) ) {
+      return { kind: "fuel", slot: this._synth.hoverMachine };
+    }
+    if ( drag.type === "key" ) {
+      if ( drag.name === "blueKey" && this._synth && this._synth.hoverMachine && inv.isLocked(this._synth.hoverMachine) ) {
+        return { kind: "unlockSynth", slot: this._synth.hoverMachine };
+      }
+      if ( drag.name === "greenKey" && this._equip && this._equip.lockHover && inv.isLocked(this._equip.lockHover) ) {
+        return { kind: "unlockEquip", slot: this._equip.lockHover };
+      }
+      return null;
+    }
+    return (this._equip && this._equip.dropRef())
+        || (this._synth && this._synth.dropRef())
+        || (this._items && this._items.dropRef())
+        || null;
   }
 
   // The slide-out tab is live only when this panel is actually on-screen — i.e.
@@ -234,7 +269,14 @@ export default class InventoryMenu extends UIWindow {
   // you couldn't get out of. See Game.js: the menu is registered on first level
   // start and, on reload, re-registered when `inventoryUnlocked` is restored.
   _tabInteractive() {
-    return !this.hide && this.engine.gameObjects.all.indexOf(this) !== -1;
+    if ( this.hide || this.engine.gameObjects.all.indexOf(this) === -1 ) return false;
+    // Tutorial "farm two cells" step locks the panel CLOSED: the tab stays live only
+    // to CLOSE an already-open panel (originX<4 == open), never to re-open a closed
+    // one — so the lone Energy Cell can't be burned on a synth before the second is
+    // farmed. (Pure HUD veto; the panel is never moved by the tutorial itself.)
+    var tut = this.engine.globals.tutorial;
+    if ( tut && tut.panelLockedClosed && tut.panelLockedClosed() && this.originX >= 4 ) return false;
+    return true;
   }
 
   update() {
@@ -406,6 +448,57 @@ export default class InventoryMenu extends UIWindow {
         fadeOut: true,
       }));
     }
+  }
+
+  // SCREEN-space rect for a named onboarding anchor (used by the Tutorial coach to
+  // ring the slot the player should act on). Returns null when the target isn't
+  // currently on-screen (panel slid away / row scrolled off). Built on the same
+  // _mapFromComponent the gem-flyer uses, so it tracks the panel slide live.
+  //   {kind:"tab"}                       — the slide-out SYNTH/CLOSE handle
+  //   {kind:"equip",     slot}           — an equip slot (primary/effect/left/…)
+  //   {kind:"synthBody", gem}            — a synth machine's whole body
+  //   {kind:"synthSlot", gem}            — a synth machine's fuel slot
+  //   {kind:"inv",       index}          — an inventory grid slot
+  anchorRect(spec) {
+    if ( !spec ) return null;
+    if ( spec.kind === "tab" ) {
+      var r = this.invOpenClick;
+      return { x: r.x, y: r.y, w: r.w, h: r.h };
+    }
+    if ( spec.kind === "equip" && this._equip ) {
+      var es = this._equip.equipSlots[spec.slot];
+      if ( !es ) return null;
+      var ep = this._mapFromComponent(this, this._equip, es.x, es.y);
+      return { x: ep.x, y: ep.y, w: es.w, h: es.h };
+    }
+    if ( (spec.kind === "synthBody" || spec.kind === "synthSlot") && this._synth ) {
+      var m = this._synth.machines.find(x => x.gem === spec.gem);
+      if ( !m ) return null;
+      var sr = spec.kind === "synthSlot" ? m.slot : m.body;
+      var sp = this._mapFromComponent(this, this._synth, sr.x, sr.y);
+      return { x: sp.x, y: sp.y, w: sr.w, h: sr.h };
+    }
+    if ( spec.kind === "inv" && this._items ) {
+      return this._invSlotRect(spec.index);
+    }
+    return null;
+  }
+
+  // Screen rect of inventory slot `index`, or null when its row is scrolled out of
+  // the visible grid band. Mirrors the END-point math in _spawnGemFlyer (compose
+  // ItemRow-local → items.menu → Items-local → screen).
+  _invSlotRect(index) {
+    var items = this._items;
+    if ( !items ) return null;
+    var step = items.iconSize + items.iconPadding, sz = items.iconSize;
+    var row = Math.floor(index / items.iconColumns), col = index % items.iconColumns;
+    var topRow = Math.round((items.menu.scroll || 0) / step);
+    if ( row < topRow || row >= topRow + items.iconRows ) return null;
+    var rowComp = items.menu.components[row];
+    if ( !rowComp ) return null;
+    var inMenu = this._mapFromComponent(items.menu, rowComp, col * step, 0);
+    var p = this._mapFromComponent(this, items, inMenu.x, inMenu.y);
+    return { x: p.x, y: p.y, w: sz, h: sz };
   }
 }
 
@@ -752,10 +845,10 @@ class Synthesis extends UIComponent {
       { fontSize: 10, fontColor: keyHover ? "#bcd3ff" : "#6f86b8", center: true });
   }
 
-  // Idle fuel/sec from the loaded gem (0 if empty) — no base rate. In sub-fuel
-  // units this is ALSO the exact per-frame idle drip (see FUEL_SCALE).
+  // Idle fuel/sec from the loaded gem (0 if empty) — no base rate. At 60fps this is
+  // also the per-frame idle drip in sub-fuel (see FUEL_SCALE / the tier table).
   _idleFuel(st) {
-    return st.loaded ? st.loaded.tier * IDLE_FUEL_PER_TIER : 0;
+    return st.loaded ? idleFuelForTier(st.loaded.tier) : 0;
   }
 
   // Burst fuel/sec of the CURRENTLY burning hourglass (queue head; 0 if none) —
@@ -886,7 +979,7 @@ class Synthesis extends UIComponent {
       st.level = st.level || 1;
       st.xp = st.xp || 0;
       st.fuel = st.fuel || 0;
-      st.fuel += this._idleFuel(st);                 // idle drip (sub-fuel/frame, whole)
+      st.fuel += this._idleFuel(st);                 // idle drip (sub-fuel/frame, tenths)
       var head = st.burstQueue && st.burstQueue[0];  // head = highest-rate cell (queue is sorted desc)
       if ( head ) {
         var drain = Math.min(head.rate, head.left);  // exact: left is a whole multiple of rate
@@ -1100,7 +1193,11 @@ class Equipment extends UIComponent {
     this.equipment = this.inventory.equipment;
     this.equipFlash = {};   // brief white flash per slot after a merge
 
-    var size = Item.ICON_SIZE, gap = 34, W = this.width, H = this.height;
+    // ONE slot gap shared by the player pair AND each helper pair, so all four
+    // pairs read identically — wide enough that the "Weapon"/"Effect" captions
+    // under each slot are clearly separate words (was 34 for the player, 6 for the
+    // bunched helpers).
+    var size = Item.ICON_SIZE, gap = 26, W = this.width, H = this.height;
     var label = (text, x, ly, color) => new Text(text, x + size/2, ly, {fontSize: 11, fontColor: color ?? "#9aa7c2", center: true});
 
     // Player's two slots: weapon + its effect gem, paired & centered, floating
@@ -1118,10 +1215,9 @@ class Equipment extends UIComponent {
     // Each helper now has TWO slots (weapon + effect) side by side, centred on the
     // turret and raised so the on-hover readout has room ABOVE them. weapon = left
     // of centre, effect = right of centre (mirrors the player's pair).
-    var hGap = 6;
     var helperSlotY = helperHeadTop - 6 - size - 30;
-    var hWeaponX = cx => cx - size - hGap / 2;
-    var hEffectX = cx => cx + hGap / 2;
+    var hWeaponX = cx => cx - size - gap / 2;   // same `gap` as the player pair
+    var hEffectX = cx => cx + gap / 2;
 
     // Procedural turret draw params (the old base/base-helper sprites are gone).
     // Aim straight up; the play screen's hand-rolled turret, scaled to the panel.
@@ -1135,12 +1231,21 @@ class Equipment extends UIComponent {
       right:       new BoundingRect(hWeaponX(helperX.right), helperSlotY, size, size),
       rightEffect: new BoundingRect(hEffectX(helperX.right), helperSlotY, size, size),
     };
+    // "Weapon"/"Effect" caption UNDER every slot — players AND helpers read the
+    // same way. Drawn in drawComponent's slot loop, so they respect slot visibility.
+    var capY = pairY + size + 2, hCapY = helperSlotY + size + 2;
     this.slotLabels = {
-      primary: label("Weapon", center, pairY + size + 2),
-      effect: label("Effect", center + size + gap, pairY + size + 2),
-      // One "Helper" label per pair, centred above both slots (slot+"Effect" gets
-      // no label of its own — the on-hover readout clarifies which is which).
-      left: label("Helper", helperX.left - size/2, helperSlotY - 16, Equipment.HELPER_LABEL),
+      primary:     label("Weapon", center, capY),
+      effect:      label("Effect", center + size + gap, capY),
+      left:        label("Weapon", hWeaponX(helperX.left),  hCapY, Equipment.HELPER_LABEL),
+      leftEffect:  label("Effect", hEffectX(helperX.left),  hCapY, Equipment.HELPER_LABEL),
+      right:       label("Weapon", hWeaponX(helperX.right), hCapY, Equipment.HELPER_LABEL),
+      rightEffect: label("Effect", hEffectX(helperX.right), hCapY, Equipment.HELPER_LABEL),
+    };
+    // "Helper" header centred ABOVE each pair (identifies the mini-turret). Drawn
+    // with the helper turrets so it only appears once that helper is unlocked.
+    this.helperNames = {
+      left:  label("Helper", helperX.left  - size/2, helperSlotY - 16, Equipment.HELPER_LABEL),
       right: label("Helper", helperX.right - size/2, helperSlotY - 16, Equipment.HELPER_LABEL),
     };
 
@@ -1390,6 +1495,7 @@ class Equipment extends UIComponent {
         x: this.helperDrawX[s], y: this.height, aim: up, scale: 0.45, tint: "#35c9d6",
         weapon: weaponTypeOf(eq[s]), effectColor: effectColorOf(eq[s + "Effect"]), phase: 0.4,
       });
+      this.helperNames[s]?.draw(this.ctx);   // "Helper" header above the pair
     });
     this.borderRect.draw(this.ctx);
     for ( var key in this.equipment ) {

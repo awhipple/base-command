@@ -179,7 +179,7 @@ number here as final.** Icons = per-tier sheet tiles `<color>-gem-<n>` (cut from
 
 The heart of the game. State lives on `inventory.machines` (saved in `Game.js`),
 so synthesizers run **on the inventory screen AND during levels**. The tunable
-knobs are at the top of `InventoryMenu.js` (`GEN_SECONDS`, `IDLE_FUEL_PER_TIER`,
+knobs are at the top of `InventoryMenu.js` (`GEN_SECONDS`, `IDLE_FUEL_BY_TIER`,
 `LEVEL_GEMS`) and in `Item.js` (`HOURGLASS_FUEL`, `BURST_SECONDS`) — the values
 are a rough first pass. **The progression philosophy + the math behind every
 ratio + the open calibration decisions live in `PROGRESSION.md` — read it before
@@ -200,7 +200,8 @@ are anchors to tune there.
 - **A synth's fuel/sec = IDLE + BURST (two independent inputs, summed).** There
   is **no passive base rate** — an empty, un-boosted synth makes nothing.
   - **IDLE** = a gem dropped in the slot (persistent, never consumed),
-    contributing `tier × IDLE_FUEL_PER_TIER` fuel/sec forever. Optional —
+    contributing `IDLE_FUEL_BY_TIER[tier]` fuel/sec forever (a hand-tuned per-tier
+    table — an accelerating ramp 0.5→10.0/s, no longer `tier × const`). Optional —
     purely the over-time idle path. **Colour-locked:** a synth only accepts its
     OWN colour as fuel (red gems → red synth), so each colour is an independent
     tree — investing timers/gems into red speeds up only red, never blue/yellow.

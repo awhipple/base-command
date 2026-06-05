@@ -61,8 +61,12 @@ export default class TitleScreen extends UIWindow {
         center: true,
       },
       {
+        // Gap between the top-pinned title and the level-select group. The banner
+        // stays near the top; this drops the level select + Start down toward the
+        // vertical middle (the old stat panel used to fill the lower screen).
+        // Eyeball-tunable (canvas is 800 tall).
         type: "spacer",
-        height: 100,
+        height: 190,
       },
       {
         type: LevelSelect,
@@ -135,6 +139,48 @@ export default class TitleScreen extends UIWindow {
     if ( this.gearHover ) this.engine.cursor = "pointer";
   }
 
+  // Screen-space rect of the Start button — for the onboarding coach to ring once
+  // the player is back on the title screen. Tracks the title's slide (innerRect.x
+  // follows originX). null until the button has been laid out (its width is
+  // computed on first draw). Same stacked-component math as the inventory menu's
+  // _mapFromComponent; callers gate off-screen rects themselves (the title slides
+  // fully off-left while the inventory panel is open).
+  startButtonRect() {
+    var btn = this.components.find(c => c instanceof PrimaryButton);
+    if ( !btn || !btn.rect || btn.rect.w === 0 ) return null;
+    var top = this.innerPadding;
+    for ( var i = 0; i < this.components.length; i++ ) {
+      if ( this.components[i] === btn ) break;
+      top += this.components[i].canvas.height + this.innerPadding;
+    }
+    return {
+      x: this.innerRect.x + this.innerPadding + (btn.left || 0) + btn.rect.x,
+      y: this.innerRect.y + top + btn.rect.y - this.scroll,
+      w: btn.rect.w, h: btn.rect.h,
+    };
+  }
+
+  // Screen-space rect of the RIGHT (next-level) chevron — for the optional Level-2
+  // nudge. Only when Level 1 is the selected level (so ▶ really means "go to 2");
+  // null otherwise / before layout. Same stacked-component math as startButtonRect,
+  // composed with the arrow's rect inside the LevelSelect component.
+  nextArrowRect() {
+    if ( this.engine.globals.levels.selected !== 1 ) return null;
+    var ls = this.components.find(c => c instanceof LevelSelect);
+    if ( !ls || !ls.rightArrowRect ) return null;
+    var top = this.innerPadding;
+    for ( var i = 0; i < this.components.length; i++ ) {
+      if ( this.components[i] === ls ) break;
+      top += this.components[i].canvas.height + this.innerPadding;
+    }
+    var r = ls.rightArrowRect;
+    return {
+      x: this.innerRect.x + this.innerPadding + (ls.left || 0) + r.x,
+      y: this.innerRect.y + top + r.y - this.scroll,
+      w: r.w, h: r.h,
+    };
+  }
+
   onMouseMove(event) {
     this.gearHover = !this.hide && this.gearRect.contains(event.pos.x - this.originX, event.pos.y);
     super.onMouseMove(event);
@@ -197,9 +243,14 @@ class LevelSelect extends UIComponent {
     this.keyRewardRect = new BoundingRect(290 + infoShift + 31, 65, 25, 25);
   }
 
+  // Whether the level-select can step further each way — drives BOTH arrow
+  // visibility and its hover/click. Level 1 has no left; the last level no right.
+  _canLeft()  { return this.levels.selected > 1; }
+  _canRight() { return this.levels.selected < this.levels.list.length; }
+
   onMouseMove(event) {
-    this.leftHover = this.leftArrowRect.contains(event.pos);
-    this.rightHover = this.rightArrowRect.contains(event.pos);
+    this.leftHover = this._canLeft() && this.leftArrowRect.contains(event.pos);
+    this.rightHover = this._canRight() && this.rightArrowRect.contains(event.pos);
     this.hover = this.leftHover || this.rightHover;
 
     // Hover the energy-cell reward → its tooltip; hover the one-time key (when
@@ -293,8 +344,8 @@ class LevelSelect extends UIComponent {
     this.engine.globals.levels.current.icon.draw(this.ctx, this.iconRect);
 
     this.levelText.draw(this.ctx);
-    this._drawChevron(this.leftArrowRect, "left", this.leftHover);
-    this._drawChevron(this.rightArrowRect, "right", this.rightHover);
+    if ( this._canLeft() )  this._drawChevron(this.leftArrowRect, "left", this.leftHover);
+    if ( this._canRight() ) this._drawChevron(this.rightArrowRect, "right", this.rightHover);
 
     this.enemiesText.draw(this.ctx);
     this.rewardText.draw(this.ctx);

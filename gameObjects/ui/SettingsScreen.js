@@ -169,6 +169,7 @@ export default class SettingsScreen extends UIWindow {
     var w = Math.min(480, engine.window.width - 40);
     var armed = { state: false };
     var unlocked = { state: false };   // flips the Unlock-all label to "Unlocked"
+    var tutSkipped = { state: false }; // flips the Skip-tutorial label to "Tutorial skipped"
 
     // The "Credits" replay button only exists once the victory crawl has been
     // unlocked (level 7 beaten — opts.showCredits returns the persisted flag).
@@ -204,6 +205,19 @@ export default class SettingsScreen extends UIWindow {
           onCommit: () => { opts.onAudioCommit && opts.onAudioCommit(); engine.sounds.play("zap"); },
         },
         { type: "spacer", height: 18 },
+        // Skip the onboarding coach for good (dev AND prod). Flips its own label to
+        // "Tutorial skipped" once used, like the Unlock-all cheat.
+        {
+          type: LabelButton,
+          text: { button: "Skip tutorial" },
+          labelFn: () => tutSkipped.state ? "Tutorial skipped" : "Skip tutorial",
+          fontColor: "#dfe6f2",
+          borderColor: "#5a6b8a",
+          fontSize: 20,
+          center: true,
+          callback: () => { tutSkipped.state = true; opts.onSkipTutorial?.(); },
+        },
+        { type: "spacer", height: 14 },
         {
           type: DangerButton,
           text: { button: "Reset save data" },

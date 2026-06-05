@@ -4,7 +4,7 @@
 > should stay stable; the *absolute anchor numbers* are first-pass and meant to
 > be tuned over time. When you change a constant, change it here too (or change
 > it here first, then push it into code). Code knobs live at the top of
-> `gameObjects/ui/InventoryMenu.js` (`GEN_SECONDS`, `IDLE_FUEL_PER_TIER`,
+> `gameObjects/ui/InventoryMenu.js` (`GEN_SECONDS`, `IDLE_FUEL_BY_TIER`,
 > `LEVEL_GEMS`), in `gameObjects/Item.js` (`HOURGLASS_FUEL`, `BURST_SECONDS`,
 > `gemWeapon`/`gemEffect`), and in `gameObjects/Levels.js` (per-level
 > `enemies`/`enemyHp`/`spawnRate`). See `CLAUDE.md` § "Synthesis progression
@@ -47,7 +47,7 @@ A synth charges by `fuelPerSec` and pops one gem each time its bar fills.
 ```
 time per gem      = GEN_SECONDS × 2^(L-1) / fuelPerSec          [seconds]
 fuelPerSec        = idle + burst
-idle              = fuelGemTier × IDLE_FUEL_PER_TIER            [persistent]
+idle              = IDLE_FUEL_BY_TIER[fuelGemTier]             [persistent, per-tier table]
 burst             = hourglass flat rate, for BURST_SECONDS only [one-shot]
 ```
 
@@ -67,7 +67,14 @@ burst             = hourglass flat rate, for BURST_SECONDS only [one-shot]
   *deterministic* gem count, with no floating-point fuzz at the boundary (players
   reason about hourglass→gems).
 
-**Current anchors:** `GEN_SECONDS=60`, `IDLE_FUEL_PER_TIER=0.5`, `LEVEL_GEMS=16` (17 at L5 — §2a), `FUEL_SCALE=60`.
+**Current anchors:** `GEN_SECONDS=60`, `LEVEL_GEMS=16` (17 at L5 — §2a), `FUEL_SCALE=60`,
+and the idle rate is now a **hand-tuned per-tier table** (replaced the old `tier × 0.5`):
+`IDLE_FUEL_BY_TIER = [0.5, 1.1, 1.8, 2.6, 3.5, 4.5, 5.6, 6.8, 8.1, 10.0]` fuel/s for T1…T10
+(jumps grow 0.6, 0.7, 0.8 … 1.3; T10 rounded up to a clean 10.0).
+
+> ⚠ The idle curve changed from linear `tier × 0.5` to the accelerating table above.
+> The idle-time figures in the rest of this section were derived from the **old** linear
+> rate and need a recompute against the table (the formula is still the source of truth).
 
 Derived quantities (the formulas are the source of truth; idle pace is **being
 actively tuned**, so compute headline times from the formula rather than trusting
@@ -76,14 +83,16 @@ any baked-in table):
 ```
 fuel to mint one tier-L gem    = GEN_SECONDS × 2^(L-1)                        = 60 × 2^(L-1)
 fuel to level a synth once     = LEVEL_GEMS × GEN_SECONDS × 2^(L-1)           = 960 × 2^(L-1)
-idle seconds per synth level   = LEVEL_GEMS × GEN_SECONDS × 2^(L-1) / (F × IDLE_FUEL_PER_TIER)
-   (F = loaded fuel-gem tier)  = 1920 × 2^(L-1) / F     at the current anchors
+idle seconds per synth level   = LEVEL_GEMS × GEN_SECONDS × 2^(L-1) / IDLE_FUEL_BY_TIER[F]
+   (F = loaded fuel-gem tier)  = 960 × 2^(L-1) / IDLE_FUEL_BY_TIER[F]   (rate no longer linear in F)
 ```
 
-**At the current anchors** (`IDLE_FUEL_PER_TIER=0.5`): first synth tier-up (T1
-fuel gem, idle only) ≈ **32 min**; growing one synth all the way to T10 ≈ **~272 h
-pure passive** (leave a T1 gem in) or **~36 h** if you reinvest your harvest as
-ever-higher fuel (F≈L). Each ×½ change to `IDLE_FUEL_PER_TIER` doubles these.
+**At the current anchors** (T1 idle = `0.5`/s): first synth tier-up (T1 fuel gem,
+idle only) ≈ **32 min** (T1 rate unchanged); growing one synth all the way to T10
+≈ **~272 h pure passive** (leave a T1 gem in) — but the **reinvest** path (feed
+ever-higher fuel, F≈L) is now **faster than the old ~36 h** because T2…T10 rates
+were raised to `IDLE_FUEL_BY_TIER` (recompute against the table). Lowering the whole
+table slows these; raising it speeds them.
 
 **The fuel gem is the idle skill knob.** Rate ∝ fuel tier, so keeping your fuel
 gem current (reinvesting harvested gems back into the slot) roughly quarters the
@@ -307,17 +316,21 @@ concrete numeric consequence, and a leaning to argue against.
 
 ### Decision 1 — Idle pace anchor
 **How long should the FIRST synth tier-up take** (basic T1 fuel gem, idle only,
-no hourglasses)? Everything doubles from this anchor. Lever: `GEN_SECONDS` /
-`IDLE_FUEL_PER_TIER`.
+no hourglasses)? Everything doubles from this anchor. Lever: `GEN_SECONDS` and the
+**T1 entry** of `IDLE_FUEL_BY_TIER` (still `0.5`/s, so the first-tier-up figure below is
+unchanged; but T2…T10 were raised to the accelerating table, so the *reinvest* column —
+which climbs through higher fuel tiers — now resolves faster and needs a recompute).
 
 | Option | First tier-up | Max one synth (passive / reinvest) | Feel |
 |---|---|---|---|
-| **~32 min (current: IDLE_FUEL_PER_TIER=0.5)** | 32 m | ~272 h / ~36 h | long idle commitment |
-| ~64 min (IDLE=0.25) | 64 m | ~545 h / ~72 h | very long |
-| ~16 min (IDLE=1) | 16 m | ~136 h / ~18 h | moderate / idle-forward |
+| **~32 min (current: T1 idle = 0.5/s)** | 32 m | ~272 h / **faster than ~36 h** (table) | long idle commitment |
+| ~64 min (T1 idle = 0.25) | 64 m | ~545 h / ~72 h | very long |
+| ~16 min (T1 idle = 1) | 16 m | ~136 h / ~18 h | moderate / idle-forward |
 
-*Leaning: TBD — idle pace is being actively tuned* (`IDLE_FUEL_PER_TIER` walked
-2 → 1 → 0.25 → 0.5). Long river per pillar 4; revisit alongside Decision 2.
+*Leaning: TBD — idle pace is being actively tuned.* The idle rate is now the per-tier
+`IDLE_FUEL_BY_TIER` table (T1 history: walked 2 → 1 → 0.25 → 0.5); the higher tiers were
+bumped to an accelerating ramp, which speeds the reinvest path. Long river per pillar 4;
+revisit alongside Decision 2.
 
 ### Decision 2 — Active accelerator strength
 **How many clears of a level should equal one synth tier-up of fuel?** Lever:
@@ -374,8 +387,9 @@ become exact, and the climb stays gradual (pillar 7).
    doubles the rate; fuel = rate × seconds, so that doubles the fuel too), and the
    doubled rate means it lands in the normal ~5 s (not ~10 s). So a **single**
    level-1 clear yields your first gem.
-4. **Load it as fuel** (idle = 2/s) — that colour's river starts: a gem every
-   30 s. The one-time bonus is now spent; every later hourglass is normal.
+4. **Load it as fuel** (T1 idle = 0.5/s — see `IDLE_FUEL_BY_TIER`) — that colour's
+   river starts: a gem every ~2 min. The one-time bonus is now spent; every later
+   hourglass is normal.
 5. From here every gem is a choice: **equip** it (weapon/effect to clear level 2),
    **merge** two for a tier-2, or **feed** a higher gem back as fuel to speed the
    river. Beating level 2 now yields **T2 hourglasses** — bigger bursts — and the

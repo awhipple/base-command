@@ -8,6 +8,7 @@ import stats from "./gameObjects/Stats.js";
 import Levels from "./gameObjects/Levels.js";
 import { constrain } from "./engine/GameMath.js";
 import InventoryMenu from "./gameObjects/ui/InventoryMenu.js";
+import Tutorial from "./gameObjects/ui/Tutorial.js";
 import Inventory from "./gameObjects/Inventory.js";
 import Cursor from "./gameObjects/Cursor.js";
 import Reward from "./gameObjects/Reward.js";
@@ -122,7 +123,9 @@ export default class Game {
       Item.NONE.engine = this.engine;
 
       this._restoreSave();
-      this._installAutosave();
+      // NB: _installAutosave() is deferred until AFTER the Tutorial is constructed
+      // (below) so every persisted save carries the tutorial field — that's what
+      // lets _restoreSave reliably tell a new player from a pre-tutorial old save.
 
       // Drifting starfield behind everything — the level backdrop (z = -1000).
       // The title screen paints over it with its own opaque black, so it only
@@ -161,6 +164,25 @@ export default class Game {
         this.engine.register(this.inventoryMenu);
       }
 
+      // Onboarding coach (always registered — it self-gates on whether any lesson
+      // is currently relevant, and stays silent for already-progressed saves). It's
+      // a pure HUD over the inventory panel; it reads the InventoryMenu for the slot
+      // rects it rings. See Tutorial.js.
+      this.tutorial = new Tutorial(this.engine, this.inventoryMenu, {
+        saved: this._savedTutorial,
+        markAllDone: this._tutorialMarkAllDone,
+        title: this.menu,   // TitleScreen — supplies the Start-button anchor
+        // Hold the coach back during combat AND the death cinematic (base.on is
+        // already false mid-collapse), and let the title settle afterward.
+        suppress: () => this.engine.globals.base.on || this.dying,
+      });
+      this.engine.register(this.tutorial);
+      this.engine.globals.tutorial = this.tutorial;   // InventoryMenu reads it to gate drops
+
+      // Autosave is installed HERE (not right after _restoreSave) so every persisted
+      // save carries the tutorial field — see _restoreSave's old-player note.
+      this._installAutosave();
+
       this.engine.register(this.engine.globals.toolTip = new ToolTip(this.engine));
 
       // Close settings + slide the inventory open so a cheat's spoils are visible.
@@ -171,12 +193,18 @@ export default class Game {
         this.invHide = false;
         this.engine.trigger("openInventory");
       };
+      // Any dev cheat jumps the player past the state the onboarding lessons assume,
+      // so it also retires the whole tutorial (active card + every future one).
+      var skipTutorial = () => { if ( this.tutorial ) this.tutorial.skip(); };
       this.settingsScreen = new SettingsScreen(this.engine, {
         onReset: () => this._resetSave(),
         dev: this.engine.dev,
-        onCheatEnergy: () => { this.inventory.cheat();     revealInventory(); },
-        onCheatGems:   () => { this.inventory.cheatGems(); revealInventory(); },
+        // Available in dev AND prod: dismiss the onboarding coach for good.
+        onSkipTutorial: skipTutorial,
+        onCheatEnergy: () => { skipTutorial(); this.inventory.cheat();     revealInventory(); },
+        onCheatGems:   () => { skipTutorial(); this.inventory.cheatGems(); revealInventory(); },
         onUnlockAll:   () => {
+          skipTutorial();
           this.inventory.unlockAll();                  // open every lock + drop keys
           this.engine.globals.levels.disableKeyRewards();   // stop keys dropping
           // Stay on the Settings screen (unlike the other cheats) so you can then
@@ -239,7 +267,9 @@ export default class Game {
         }
       });
 
-      this.invSlide = this.engine.prod ? 20 : -20;
+      // Boot with the panel CLOSED (slid right) — title screen first, same in dev
+      // and prod. (Dev used to start at -20 and auto-open into the inventory.)
+      this.invSlide = 20;
 
       this.engine.register(new GameUI(this.engine));
 
@@ -264,6 +294,26 @@ export default class Game {
         // DOM "Escape". Holding it self-guards — _exitLevel clears base.on.
         if ( evt.key === "esc" && this.engine.globals.base.on ) this._exitLevel();
       });
+
+      // Phone / browser BACK button → behave like Escape: bail out of an
+      // in-progress level, or close the inventory/synth panel, returning to the
+      // title screen. Browsers only fire popstate when there's a history entry to
+      // pop, so we keep ONE "trap" entry armed on the stack: each Back consumes
+      // it, we act, then re-arm — so Back is always caught and the game never
+      // closes out from under an open level/panel. (Same URL, no navigation.)
+      if ( typeof window !== "undefined" && window.history?.pushState ) {
+        var armBack = () => window.history.pushState({ baseCommandTrap: true }, "");
+        armBack();
+        window.addEventListener("popstate", () => {
+          if ( this.engine.globals.base.on ) {
+            this._exitLevel();                       // in a level → exit to title
+          } else if ( this.invSlide < 0 ) {
+            this.engine.trigger("closeInventory");   // inventory/synth open → close
+          }
+          // else: bare title screen → nothing to back out of.
+          armBack();
+        });
+      }
 
       // Boss appears → switch to the boss theme. The main theme returns when the
       // level is won (levelWin) or you bail out (_exitLevel), the boss fading out.
@@ -699,6 +749,9 @@ export default class Game {
       // Has the synth/inventory panel been unlocked (first level started)? Persist
       // it so the slide-out tab returns on reload (it's session-only otherwise).
       inventoryUnlocked: !!this.inventoryUnlocked,
+      // Onboarding coach progress (which lessons are done). Constructed after this
+      // snapshot's first call may run, so guard the ref.
+      tutorial: this.tutorial ? this.tutorial.snapshot() : this._savedTutorial,
     };
   }
 
@@ -751,6 +804,16 @@ export default class Game {
       || (typeof saved.selectedLevel === "number" && saved.selectedLevel > 1)
       || !!saved.creditsSeen;
     this.inventoryUnlocked = saved.inventoryUnlocked ?? progressed;
+    // Onboarding coach. Hand its persisted progress to the Tutorial (built later).
+    // The tutorial is ONLY for brand-new players (no save at all) or a fresh reset.
+    // ANY existing save that predates the tutorial (no `tutorial` field) belongs to
+    // a returning player — mark every lesson done so we never coach them. A save
+    // that DOES carry the field is a post-tutorial player mid-onboarding; restore
+    // their progress so they continue rather than restart. (Saves are only written
+    // once the Tutorial exists — _installAutosave runs after it — so a new player's
+    // save always carries the field, and absence reliably means "old save".)
+    this._savedTutorial = saved.tutorial;
+    this._tutorialMarkAllDone = !saved.tutorial;
     if ( saved.equipment ) {
       ["primary", "effect", "left", "leftEffect", "right", "rightEffect"].forEach(slot => {
         var name = saved.equipment[slot];
@@ -771,20 +834,9 @@ export default class Game {
 
   _resetSave() {
     SaveStore.clear();
-    // Dev: wipe to a fresh state IN PLACE and STAY in the Settings modal — no
-    // reload, no slide. From there you can Close into a clean game with no items,
-    // or hit a Cheat button (which closes the modal + slides into the inventory).
-    if ( this.engine.dev ) {
-      this.inventory.reset();     // wipes items + re-locks every slot
-      stats.power.lvl = stats.power.val = 1;
-      stats.speed.lvl = stats.speed.val = 1;
-      this.engine.globals.levels.selected = 1;
-      this.engine.globals.levels.keysAwarded = {};   // keys drop again from scratch
-      this.creditsSeen = false;   // let the victory crawl play again after a wipe
-      this.engine.trigger("saveRequested");
-      return;
-    }
-    // Prod: reload to a clean title screen (no cheat buttons exist there).
+    // Clear the save and reload to a clean title screen — same in dev and prod now.
+    // (Dev used to wipe in place and slide into the inventory; it now reloads to the
+    // title like prod, so Reset Data behaves identically everywhere.)
     if ( this._beforeUnload ) {
       window.removeEventListener("beforeunload", this._beforeUnload);
       this._beforeUnload = null;

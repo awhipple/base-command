@@ -1,4 +1,5 @@
 import GameObject from "../engine/objects/GameObject.js";
+import Item from "./Item.js";
 import { getDirectionFrom, slideDirectionTowards, Coord } from "../engine/GameMath.js";
 import { drawTurret, weaponTypeOf, effectColorOf, TURRET } from "./TurretSprite.js";
 
@@ -51,10 +52,16 @@ export default class Helper extends GameObject {
     // each shot at this helper's fire rate (see TurretSprite.drawLaserGun).
     this.charge = this.charging ? Math.min(1, this.charge + 0.22) : this.charge * 0.55;
 
-    // Only active while the main base is (same level/win gating). With no gem in
-    // this helper's slot the turret doesn't exist at all (see draw()).
-    var weapon = this.equip[this.slot];
-    if ( !weapon || !this.engine.globals.base?.on ) return;
+    // Only active while the main base is (same level/win gating). The helper
+    // fields as long as EITHER of its slots holds a gem (weapon OR effect); with
+    // ONLY an effect gem it falls back to the basic shot (Item.NONE), exactly the
+    // way the main base does for an empty primary — so a lone effect gem still
+    // mans (and tints) a helper. With BOTH slots empty the turret doesn't exist
+    // at all (see draw()).
+    var weaponGem = this.equip[this.slot];
+    var effectGem = this.equip[this.slot + "Effect"];
+    if ( (!weaponGem && !effectGem) || !this.engine.globals.base?.on ) return;
+    var weapon = weaponGem ?? Item.NONE;
 
     var target = this._nearestEnemy();
     if ( target ) {
@@ -76,8 +83,9 @@ export default class Helper extends GameObject {
     this.firePos.x = this.x + Math.cos(this.aim) * reach;
     this.firePos.y = this.y + Math.sin(this.aim) * reach;
 
-    // No weapon, or nothing to shoot at -> hold fire (don't bank up shots).
-    if ( !weapon || !target ) return;
+    // Nothing to shoot at -> hold fire (don't bank up shots). `weapon` is always
+    // set now (real gem or the Item.NONE basic shot).
+    if ( !target ) return;
 
     this.fireIn -= 1 / 60;
     if ( this.fireIn < 0 ) {
@@ -109,8 +117,10 @@ export default class Helper extends GameObject {
   }
 
   draw(ctx) {
-    // No gem equipped -> the helper turret isn't present on the battlefield.
-    if ( !this.equip[this.slot] ) return;
+    // Both slots empty -> the helper turret isn't present on the battlefield.
+    // With only an effect gem it still shows (as a basic turret tinted by the
+    // effect colour), matching the basic-shot fallback in update().
+    if ( !this.equip[this.slot] && !this.equip[this.slot + "Effect"] ) return;
 
     drawTurret(ctx, {
       x: this.x, y: this.y, aim: this.aim,

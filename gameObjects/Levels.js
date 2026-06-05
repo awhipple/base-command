@@ -19,7 +19,8 @@ export default class Levels {
         // 2-hp enemies die in 2 hits. Just a few, slow — something to do before
         // your first synthesized gem.
         enemies: 3,
-        spawnRate: 1.6,
+        spawnRate: 2.0,           // eased 1.6→2.0: at 1.6 the 2nd/3rd grunts could bunch into a
+                                  // near-simultaneous arrival the 1-dmg basic shot can't out-kill (unwinnable)
         enemyHp: 2,
         reward: "hourglass", chance: 100,
         key: "blue",              // one-time: 1st synth unlock (blue → synth machine)
