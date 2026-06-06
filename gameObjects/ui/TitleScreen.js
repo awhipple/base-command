@@ -56,7 +56,7 @@ export default class TitleScreen extends UIWindow {
       },
       {
         type: Banner,
-        text: "Base Command",
+        text: "Kalros",
         fontColor: "#7ee787",
         center: true,
       },

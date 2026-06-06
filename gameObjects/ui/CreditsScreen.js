@@ -76,7 +76,7 @@ export default class CreditsScreen {
   // ── Star-Wars crawl content ────────────────────────────────────────────────
   // Edit freely — this is the "workshop" part. Yellow = the crawl body.
   static SCRIPT = [
-    { kind: "title",    text: "BASE COMMAND" },
+    { kind: "title",    text: "KALROS" },
     { kind: "subtitle", text: "EPISODE VII" },
     { kind: "subtitle", text: "THE LAST DRAGON" },
     { kind: "gap", h: 56 },

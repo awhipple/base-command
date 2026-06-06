@@ -700,7 +700,7 @@ export default class Game {
   _loadAudioPrefs() {
     var def = { music: this.engine.dev ? 0 : 1, sfx: 1 };
     try {
-      var raw = localStorage.getItem("base-command:audio");
+      var raw = localStorage.getItem("kalros:audio");
       if ( raw ) {
         var v = JSON.parse(raw);
         return { music: v.music ?? def.music, sfx: v.sfx ?? def.sfx };
@@ -711,7 +711,7 @@ export default class Game {
 
   _saveAudioPrefs() {
     try {
-      localStorage.setItem("base-command:audio", JSON.stringify({
+      localStorage.setItem("kalros:audio", JSON.stringify({
         music: this.engine.sounds.musicVolume,
         sfx: this.engine.sounds.sfxVolume,
       }));

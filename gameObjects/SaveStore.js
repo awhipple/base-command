@@ -1,4 +1,4 @@
-const KEY = "base-command:save";
+const KEY = "kalros:save";  // renamed from "base-command:save"; storageMigration.js carries old saves over
 // Bump on breaking item-model changes — a mismatched version is dropped on
 // load (load() returns null), so the player simply starts fresh. v2: gem/weapon
 // redesign (ball/stinger/laser + effect-slot gems). v3: synthesis economy —
